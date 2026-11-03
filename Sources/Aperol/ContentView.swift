@@ -79,18 +79,18 @@ struct ContentView: View {
                         Image(systemName: "memorychip")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
-                        Text("ONBOARD HARDWARE PROFILE SLOTS")
+                        Text("ONBOARD HARDWARE PROFILE")
                             .font(.system(size: 9.5, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("Status is tracked by Aperol, not read from the keyboard")
+                    Text("K70 has 1 hardware mode (3 exist only on K95)")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 8) {
-                    ForEach(1...3, id: \.self) { slot in
+                    ForEach(1...1, id: \.self) { slot in
                         slotCard(slot: slot)
                     }
                 }
@@ -253,7 +253,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "memorychip")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Save to Hardware Slot \(service.selectedSlot)")
+                        Text("Save to Keyboard Memory")
                             .font(.system(size: 11.5, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -271,7 +271,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "power")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Save to Slot \(service.selectedSlot) & Quit")
+                        Text("Save & Quit")
                             .font(.system(size: 11.5, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
@@ -313,7 +313,7 @@ struct ContentView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Profile \(slot)")
+                    Text("Hardware Profile")
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(isSelected ? .white : .primary)
                     Text(isSaved ? "Written by Aperol" : "Not written yet")

@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Dedicated Hardware RGB Flash Programmer for Corsair K70 MK.2 Mechanical Keyboards</strong><br>
-  Open once · Select color with instant volatile RAM stream · Commit to 3 onboard EEPROM slots · Exit (0 MB residual RAM).
+  Open once · Select color with instant volatile RAM stream · Commit to onboard memory · Exit (0 MB residual RAM).
 </p>
 
 <p align="center">
@@ -15,9 +15,9 @@
 
 ## ⚡ Key Features
 
-* **3 Onboard Hardware Profile Slots:** Corsair K70 MK.2 features 3 independent onboard hardware memory slots (`lght_00.d`, `lght_01.d`, `lght_02.d`). Aperol allows you to target any of the 3 slots individually. Switch between your written profiles at any time using the keyboard's physical **Profile Button (`Key 125`)** on the top-left panel!
+* **Real Onboard Memory Write (HWCLR):** Uses the same NXP command sequence as ckb-next's `savergb_kb()` (bulk `0x7F` colour packets followed by `07 14 03 01 01 <mode> <channel>`), covering all 144 LED positions including the Profile, Brightness and WinLock buttons. The K70 has a single hardware mode (3 exist only on the K95).
 * **Pure Volatile RAM Real-Time Streaming:** Selecting or sliding colors streams 24-bit RGB values directly to volatile device SRAM over USB HID. **Zero flash writes occur during live preview**, completely eliminating EEPROM exhaustion, lockups, and controller latency.
-* **Manual Hardware Flash (EEPROM) Commit:** Colors are committed to non-volatile flash memory only when you explicitly press **"Save to Hardware Slot"** or **"Save & Quit"**. The color persists across reboots, power cuts, and cable disconnections.
+* **Manual Hardware Flash (EEPROM) Commit:** Colors are committed to non-volatile flash memory only when you explicitly press **"Save to Keyboard Memory"** or **"Save & Quit"**. The color persists across reboots, power cuts, and cable disconnections.
 * **Non-Intrusive Launch:** Connecting or launching Aperol will **never** overwrite your keyboard's active lighting profile. It passively initializes USB communication and waits for your input.
 * **Customizable Color Presets (+ and Delete):** Add any currently selected color as a new preset with a single click on `+ Add Current Color`. Delete presets anytime by hovering over the chip. All presets persist automatically across app sessions.
 * **Complete Hardware Coverage (150 Key/Zone Positions):**

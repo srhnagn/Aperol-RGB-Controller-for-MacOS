@@ -36,7 +36,7 @@ public struct ColorPreset: Identifiable, Codable, Equatable {
 }
 
 /// Native IOKit USB HID controller for Corsair K70 MK.2 RGB keyboard.
-/// Writes directly to the hardware onboard EEPROM/flash memory (`lght_00.d`, `lght_01.d`, `lght_02.d`)
+/// Writes directly to the hardware onboard memory via the NXP HWCLR command (FIELD 0x14)
 /// covering all keys, logo, and top control buttons (Profile, Brightness, WinLock).
 @MainActor
 public final class AperolK70Service: ObservableObject {
@@ -53,7 +53,7 @@ public final class AperolK70Service: ObservableObject {
         0x1B36  // K68 RGB
     ]
 
-    public static let maxOnboardSlots: Int = 3
+    public static let maxOnboardSlots: Int = 1 // K70: HWMODE_K70 = 1
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
@@ -317,7 +317,7 @@ public final class AperolK70Service: ObservableObject {
             sendPacket(p2, to: device)
 
             var p3 = [UInt8](repeating: val, count: 64)
-            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 30; p3[3] = 0x00
+            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 0x30; p3[3] = 0x00
             sendPacket(p3, to: device)
 
             var sub = [UInt8](repeating: 0, count: 64)
@@ -330,28 +330,7 @@ public final class AperolK70Service: ObservableObject {
         streamChannel(val: b, channel: 3, finishVal: 2)
 
         isStreaming = true
-        scheduleZoneWrite(r: r, g: g, b: b, device: device)
         statusMessage = "Live Preview: \(currentHexColor)"
-    }
-
-    /// Top buttons (Profile / Brightness / WinLock), logo and media zones use separate zone packets.
-    /// Debounced so they are sent once after the color stops changing, not on every slider tick.
-    private func scheduleZoneWrite(r: UInt8, g: UInt8, b: UInt8, device: IOHIDDevice) {
-        zoneWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            MainActor.assumeIsolated {
-                guard self.connectedDevice != nil else { return }
-                for zone: UInt8 in [0x01, 0x02, 0x03, 0x04, 0x05, 0x11, 0x12, 0x13, 0x14, 0x15] {
-                    var zPkt = [UInt8](repeating: 0, count: 64)
-                    zPkt[0] = 0x07; zPkt[1] = 0x13; zPkt[2] = zone; zPkt[3] = 0x01
-                    zPkt[4] = r; zPkt[5] = g; zPkt[6] = b
-                    self.sendPacket(zPkt, to: device)
-                }
-            }
-        }
-        zoneWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: item)
     }
 
     /// Hands the keyboard back to its own firmware (stored profile, Profile and Brightness buttons work again).
@@ -367,78 +346,61 @@ public final class AperolK70Service: ObservableObject {
 
     // MARK: - Hardware Flash (EEPROM) Commit (Manual Only)
 
-    /// Commits the active color to the chosen onboard hardware profile slot (`lght_00.d`, `lght_01.d`, or `lght_02.d`).
+    /// Commits the active color to the keyboard's onboard memory.
+    ///
+    /// Protocol taken from ckb-next `savergb_kb()` (NXP, full-range keyboards, fw >= 0x0120):
+    /// for each colour channel, 3 bulk packets (60 + 60 + 24 bytes = 144 LED positions, which
+    /// includes Profile=125, Brightness=137, WinLock=8 in ckb-next's LED indexing), then
+    /// `07 14 03 01 01 <mode+1> <channel>` (FIELD_KB_HWCLR) commits that channel to flash.
+    /// The K70 has a single hardware mode (HWMODE_K70 = 1), so mode+1 is always 1.
+    /// ckb-next paces every packet by 10 ms because the device can get overwhelmed.
     public func flashColorToHardware(slot: Int? = nil) {
         guard let device = connectedDevice else {
             statusMessage = "Device Not Found"
             return
         }
-
-        let targetSlot = slot ?? selectedSlot
         isWriting = true
+        initializeDeviceIfNeeded()
 
         let nsColor = NSColor(selectedColor).usingColorSpace(.sRGB) ?? NSColor(selectedColor)
         let red = UInt8(clamping: Int((nsColor.redComponent * brightness * 255.0).rounded()))
         let green = UInt8(clamping: Int((nsColor.greenComponent * brightness * 255.0).rounded()))
         let blue = UInt8(clamping: Int((nsColor.blueComponent * brightness * 255.0).rounded()))
 
-        // 1. Set Hardware Brightness
-        let hwBrightness: UInt8 = (red == 0 && green == 0 && blue == 0) ? 0 : 3
-        var bPkt = [UInt8](repeating: 0, count: 64)
-        bPkt[0] = 0x07; bPkt[1] = 0x05; bPkt[2] = 0x02; bPkt[4] = hwBrightness
-        sendPacket(bPkt, to: device)
-
-        // 2. Target Profile Filename: "lght_00.d", "lght_01.d", or "lght_02.d"
-        let slotIndexChar: UInt8 = UInt8(0x30 + ((targetSlot - 1) % 3)) // '0', '1', or '2'
-        var namePkt = [UInt8](repeating: 0, count: 64)
-        namePkt[0] = 0x07; namePkt[1] = 0x17; namePkt[2] = 0x05
-        let nameBytes: [UInt8] = [0x6C, 0x67, 0x68, 0x74, 0x5F, 0x30, slotIndexChar, 0x2E, 0x64] // "lght_0X.d"
-        for (idx, b) in nameBytes.enumerated() {
-            namePkt[4 + idx] = b
-        }
-        sendPacket(namePkt, to: device)
-
-        // 3. Hardware ColorShift Static Mode Packet
-        var modePkt = [UInt8](repeating: 0, count: 64)
-        modePkt[0] = 0x7F; modePkt[1] = 0x01; modePkt[2] = 0x0D
-        modePkt[4] = 0x00 // Mode 0x00 = ColorShift
-        modePkt[5] = 0x01 // Speed
-        modePkt[6] = 0x03 // MODE_COLORS_MODE_SPECIFIC
-        modePkt[7] = 0x00 // Direction
-        modePkt[9] = red; modePkt[10] = green; modePkt[11] = blue; modePkt[12] = 0xFF
-        modePkt[13] = red; modePkt[14] = green; modePkt[15] = blue; modePkt[16] = 0xFF
-        sendPacket(modePkt, to: device)
-
-        var stop1 = [UInt8](repeating: 0, count: 64)
-        stop1[0] = 0x07; stop1[1] = 0x17; stop1[2] = 0x09
-        sendPacket(stop1, to: device)
-
-        var stop2 = [UInt8](repeating: 0, count: 64)
-        stop2[0] = 0x07; stop2[1] = 0x17; stop2[2] = 0x08
-        sendPacket(stop2, to: device)
-
-        // 4. Hardware Zone Profile Colors for top buttons and auxiliary zones
-        for zone: UInt8 in [0x01, 0x02, 0x03, 0x04, 0x05, 0x11, 0x12, 0x13, 0x14, 0x15] {
-            var zPkt = [UInt8](repeating: 0, count: 64)
-            zPkt[0] = 0x07; zPkt[1] = 0x13; zPkt[2] = zone; zPkt[3] = 0x01
-            zPkt[4] = red; zPkt[5] = green; zPkt[6] = blue
-            sendPacket(zPkt, to: device)
+        func paced(_ pkt: [UInt8]) {
+            sendPacket(pkt, to: device)
+            Thread.sleep(forTimeInterval: 0.010)
         }
 
-        // 5. Switch to Hardware Lighting Mode
-        var hwPkt = [UInt8](repeating: 0, count: 64)
-        hwPkt[0] = 0x07; hwPkt[1] = 0x04; hwPkt[2] = 0x01
-        sendPacket(hwPkt, to: device)
+        let hwMode: UInt8 = 0 // K70: only one hardware mode
+        Thread.sleep(forTimeInterval: 0.100)
+        for (channel, value) in [(UInt8(0x01), red), (UInt8(0x02), green), (UInt8(0x03), blue)] {
+            var p1 = [UInt8](repeating: value, count: 64)
+            p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
+            paced(p1)
+            var p2 = [UInt8](repeating: value, count: 64)
+            p2[0] = 0x7F; p2[1] = 0x02; p2[2] = 60; p2[3] = 0x00
+            paced(p2)
+            var p3 = [UInt8](repeating: value, count: 64)
+            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 24; p3[3] = 0x00
+            paced(p3)
 
-        var hwLight = [UInt8](repeating: 0, count: 64)
-        hwLight[0] = 0x07; hwLight[1] = 0x05; hwLight[2] = 0x01
-        sendPacket(hwLight, to: device)
+            var commit = [UInt8](repeating: 0, count: 64)
+            commit[0] = 0x07; commit[1] = 0x14; commit[2] = 0x03; commit[3] = 0x01
+            commit[4] = 0x01; commit[5] = hwMode + 1; commit[6] = channel
+            paced(commit)
+        }
+        Thread.sleep(forTimeInterval: 0.100)
+
+        // Hand control back to the keyboard firmware so it shows the stored profile
+        paced([0x07, 0x04, 0x01])
+        paced([0x07, 0x05, 0x01])
 
         isStreaming = false
         isInitialized = false
-        markSlotSaved(targetSlot)
+        markSlotSaved(1)
         isWriting = false
-        statusMessage = "✓ Written to Hardware Profile Slot \(targetSlot) (EEPROM)"
+        statusMessage = "✓ Written to keyboard memory (HWCLR, 144 LEDs incl. top buttons)"
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
     }
 

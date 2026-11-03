@@ -13,6 +13,7 @@ struct AperolApp: App {
             ContentView()
                 .frame(width: 460, height: 660)
                 .background(Color(red: 0.05, green: 0.05, blue: 0.06))
+                .preferredColorScheme(.dark)
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -21,6 +22,7 @@ struct AperolApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
         if let window = NSApplication.shared.windows.first {
             window.title = "Aperol RGB Controller"
             window.titlebarAppearsTransparent = true
