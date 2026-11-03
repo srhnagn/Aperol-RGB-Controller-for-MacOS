@@ -27,7 +27,7 @@ public final class AperolK70Service: ObservableObject {
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
-    @Published public var selectedColor: Color = Color(red: 1.0, green: 0.37, blue: 0.12) // Aperol signature
+    @Published public var selectedColor: Color = Color(red: 240.0 / 255.0, green: 60.0 / 255.0, blue: 0.0) // Aperol signature: Red 240, Green 60, Blue 0
     @Published public var brightness: Double = 1.0
     @Published public var statusMessage: String?
     @Published public var isWriting: Bool = false

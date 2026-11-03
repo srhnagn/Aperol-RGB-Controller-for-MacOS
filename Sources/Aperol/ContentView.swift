@@ -138,12 +138,12 @@ struct ContentView: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.secondary)
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110))], spacing: 6) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 125))], spacing: 6) {
                         presetChip(name: "Pure Red", color: Color(red: 1.0, green: 0.0, blue: 0.0))
-                        presetChip(name: "Ice White", color: Color(red: 0.88, green: 0.95, blue: 1.0))
-                        presetChip(name: "Rover Green", color: Color(red: 0.0, green: 0.90, blue: 0.46)) // 2000s Range Rover cockpit green
-                        presetChip(name: "Aperol Spritz", color: Color(red: 1.0, green: 0.37, blue: 0.12))
-                        presetChip(name: "Samogon", color: Color(red: 0.20, green: 0.92, blue: 0.55))
+                        presetChip(name: "Ice White", color: Color(red: 154.0 / 255.0, green: 220.0 / 255.0, blue: 231.0 / 255.0))
+                        presetChip(name: "Night Vision Green", color: Color(red: 123.0 / 255.0, green: 255.0 / 255.0, blue: 0.0))
+                        presetChip(name: "Aperol Spritz", color: Color(red: 240.0 / 255.0, green: 60.0 / 255.0, blue: 0.0))
+                        presetChip(name: "Samogon", color: Color(red: 0.0, green: 231.0 / 255.0, blue: 79.0 / 255.0))
                         presetChip(name: "Amber Gold", color: Color(red: 1.0, green: 0.63, blue: 0.0))
                         presetChip(name: "Cyber Magenta", color: Color(red: 0.85, green: 0.27, blue: 0.94))
                         presetChip(name: "Stealth (Off)", color: .black)

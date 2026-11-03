@@ -27,12 +27,12 @@
 * **Native macOS Color Palette:** Full spectrum color wheel, sliders, hex input, and eyedropper support via native SwiftUI ColorPicker.
 * **Iconic Hardware Presets:**
   * **Pure Red:** `#FF0000` (RGB 255, 0, 0)
-  * **Ice White:** `#E0F2FE` (Crisp cool white)
-  * **2000s Range Rover Green:** `#00E676` (Iconic classic British/BMW instrument cluster phosphor green)
-  * **Aperol Spritz:** `#FF5F1F` (Signature Italian aperitivo orange)
-  * **Samogon Emerald:** `#32EB8C` (Deep radiant emerald)
-  * **Amber Gold:** `#FFA000` (Classic amber backlight)
-  * **Cyber Magenta:** `#D946EF` (Vivid neon cyberpunk)
+  * **Ice White:** `#9ADCE7` (RGB 154, 220, 231)
+  * **Night Vision Green:** `#7BFF00` (RGB 123, 255, 0)
+  * **Aperol Spritz:** `#F03C00` (RGB 240, 60, 0)
+  * **Samogon Emerald:** `#00E74F` (RGB 0, 231, 79)
+  * **Amber Gold:** `#FFA000` (RGB 255, 160, 0)
+  * **Cyber Magenta:** `#D946EF` (RGB 217, 70, 239)
   * **Stealth:** `#000000` (All LEDs turned completely off)
 
 ---
