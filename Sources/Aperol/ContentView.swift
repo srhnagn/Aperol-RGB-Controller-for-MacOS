@@ -302,6 +302,7 @@ struct ContentView: View {
     private func slotCard(slot: Int) -> some View {
         let isSelected = service.selectedSlot == slot
         let isSaved = service.savedSlots.contains(slot)
+        let slotColor = service.slotProfiles[slot]?.color ?? Color.secondary
 
         return Button {
             service.switchToHardwareSlot(slot)
@@ -316,11 +317,17 @@ struct ContentView: View {
                         .foregroundStyle(isSelected ? .white : .secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Profile \(slot)")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.2) : .primary)
-                    Text(isSaved ? "Saved by Aperol" : "Hardware Slot")
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text("Profile \(slot)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.2) : .primary)
+                        Circle()
+                            .fill(slotColor)
+                            .frame(width: 8, height: 8)
+                            .overlay(Circle().stroke(Color.primary.opacity(0.2), lineWidth: 0.5))
+                    }
+                    Text(isSaved ? "Saved • \(service.slotProfiles[slot]?.hexString ?? "")" : (service.slotProfiles[slot]?.hexString ?? "Hardware Slot"))
                         .font(.system(size: 8.5))
                         .foregroundStyle(isSaved ? Color.green : Color.secondary)
                 }
