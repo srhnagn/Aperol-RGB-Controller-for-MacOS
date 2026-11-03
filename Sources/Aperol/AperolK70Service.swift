@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Native IOKit USB HID controller for Corsair K70 MK.2 RGB keyboard.
 /// Writes directly to the hardware onboard EEPROM/flash memory (`lght_00.d`)
-/// covering all keys, logo, and the top control buttons (Profile, Brightness, WinLock).
+/// covering all keys, logo, and top control buttons (Profile, Brightness, WinLock).
 @MainActor
 public final class AperolK70Service: ObservableObject {
     public static let shared = AperolK70Service()
@@ -27,7 +27,7 @@ public final class AperolK70Service: ObservableObject {
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
-    @Published public var selectedColor: Color = Color(red: 1.0, green: 0.37, blue: 0.0) // Aperol Spritz signature
+    @Published public var selectedColor: Color = Color(red: 1.0, green: 0.37, blue: 0.12) // Aperol signature
     @Published public var brightness: Double = 1.0
     @Published public var statusMessage: String?
     @Published public var isWriting: Bool = false
@@ -35,6 +35,7 @@ public final class AperolK70Service: ObservableObject {
     private var hidManager: IOHIDManager?
     private var connectedDevice: IOHIDDevice?
     private var isInitialized: Bool = false
+    private var lastStreamTime: Date = Date.distantPast
 
     private init() {
         setupHIDManager()
@@ -101,9 +102,10 @@ public final class AperolK70Service: ObservableObject {
 
         self.connectedDevice = device
         self.isConnected = true
-        self.statusMessage = "Klavye Hazır (\(deviceName))"
+        self.statusMessage = "Connected: \(deviceName)"
 
         initializeDeviceIfNeeded()
+        applyLiveColor(selectedColor)
     }
 
     private func deviceDetached(_ device: IOHIDDevice) {
@@ -111,7 +113,7 @@ public final class AperolK70Service: ObservableObject {
             connectedDevice = nil
             isConnected = false
             isInitialized = false
-            statusMessage = "Klavye Bağlantısı Kesildi"
+            statusMessage = "Device Disconnected"
         }
     }
 
@@ -128,7 +130,7 @@ public final class AperolK70Service: ObservableObject {
         guard let device = connectedDevice, !isInitialized else { return }
         isInitialized = true
 
-        // 1. SpecialFunctionControl
+        // 1. SpecialFunctionControl: Software control mode
         sendPacket([0x07, 0x04, 0x02], to: device)
 
         // 2. LightingControl: mode software 0x02, brightness 0x03 (MAX)
@@ -141,10 +143,11 @@ public final class AperolK70Service: ObservableObject {
         s1[0] = 0x07; s1[1] = 0x05; s1[2] = 0x08; s1[3] = 0x00; s1[4] = 0x01
         sendPacket(s1, to: device)
 
-        // 4. Matrix mapping: sequence of 120 key IDs
+        // 4. Matrix mapping: sequence covering all 150 key/zone positions
+        // This includes standard matrix + Top Buttons (Profile 125, Brightness 16, WinLock 114, Logo 59)
         let skipped: Set<UInt8> = [0x3F, 0x41, 0x42, 0x50, 0x53, 0x55, 0x6F, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81]
         var identifier: UInt8 = 0
-        for _ in 0..<4 {
+        for _ in 0..<5 { // 5 packets of 30 keys = 150 identifiers
             var pkt = [UInt8](repeating: 0, count: 64)
             pkt[0] = 0x07; pkt[1] = 0x40; pkt[2] = 0x1E
             for j in 0..<30 {
@@ -159,17 +162,23 @@ public final class AperolK70Service: ObservableObject {
         }
     }
 
-    /// Writes the selected color to the keyboard's internal hardware flash/EEPROM memory
-    /// and updates the live LED state across all keys and top utility buttons.
-    public func flashColorToHardware(red: UInt8, green: UInt8, blue: UInt8) {
-        guard let device = connectedDevice else {
-            statusMessage = "Corsair Klavye Bulunamadı"
-            return
-        }
+    /// Immediately applies the color to all keys, logo, and top buttons in real time.
+    public func applyLiveColor(_ color: Color) {
+        guard let device = connectedDevice else { return }
 
-        isWriting = true
+        // Throttle slightly to prevent USB bus saturation if dragging a slider
+        let now = Date()
+        guard now.timeIntervalSince(lastStreamTime) > 0.02 else { return }
+        lastStreamTime = now
 
-        // 1. Direct Live Stream to all 144 key positions (including top buttons: 16, 114, 125, 47, 59)
+        initializeDeviceIfNeeded()
+
+        let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        let r = UInt8(clamping: Int((nsColor.redComponent * brightness * 255.0).rounded()))
+        let g = UInt8(clamping: Int((nsColor.greenComponent * brightness * 255.0).rounded()))
+        let b = UInt8(clamping: Int((nsColor.blueComponent * brightness * 255.0).rounded()))
+
+        // 1. Direct Live Stream across 3 packets (60 + 60 + 30 = 150 keys)
         func streamChannel(val: UInt8, channel: UInt8, finishVal: UInt8) {
             var p1 = [UInt8](repeating: val, count: 64)
             p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
@@ -180,7 +189,7 @@ public final class AperolK70Service: ObservableObject {
             sendPacket(p2, to: device)
 
             var p3 = [UInt8](repeating: val, count: 64)
-            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 24; p3[3] = 0x00
+            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 30; p3[3] = 0x00
             sendPacket(p3, to: device)
 
             var sub = [UInt8](repeating: 0, count: 64)
@@ -188,11 +197,34 @@ public final class AperolK70Service: ObservableObject {
             sendPacket(sub, to: device)
         }
 
-        streamChannel(val: red, channel: 1, finishVal: 1)
-        streamChannel(val: green, channel: 2, finishVal: 1)
-        streamChannel(val: blue, channel: 3, finishVal: 2)
+        streamChannel(val: r, channel: 1, finishVal: 1)
+        streamChannel(val: g, channel: 2, finishVal: 1)
+        streamChannel(val: b, channel: 3, finishVal: 2)
 
-        // 2. Write to Hardware EEPROM / Flash Profile "lght_00.d"
+        // 2. Direct individual zone overrides (Logo, Profile, Brightness, WinLock, Media zones)
+        for zone: UInt8 in [0x01, 0x02, 0x03, 0x04, 0x05, 0x11, 0x12, 0x13, 0x14, 0x15] {
+            var zPkt = [UInt8](repeating: 0, count: 64)
+            zPkt[0] = 0x07; zPkt[1] = 0x13; zPkt[2] = zone; zPkt[3] = 0x01
+            zPkt[4] = r; zPkt[5] = g; zPkt[6] = b
+            sendPacket(zPkt, to: device)
+        }
+
+        statusMessage = "Live Color: \(currentHexColor)"
+    }
+
+    /// Writes the selected color to the keyboard's internal hardware flash/EEPROM memory (`lght_00.d`).
+    public func flashColorToHardware(red: UInt8, green: UInt8, blue: UInt8) {
+        guard let device = connectedDevice else {
+            statusMessage = "Device Not Found"
+            return
+        }
+
+        isWriting = true
+
+        // Ensure real-time state is updated
+        applyLiveColor(selectedColor)
+
+        // 1. Write to Hardware EEPROM Profile "lght_00.d"
         let hwBrightness: UInt8 = (red == 0 && green == 0 && blue == 0) ? 0 : 3
         var bPkt = [UInt8](repeating: 0, count: 64)
         bPkt[0] = 0x07; bPkt[1] = 0x05; bPkt[2] = 0x02; bPkt[4] = hwBrightness
@@ -224,6 +256,15 @@ public final class AperolK70Service: ObservableObject {
         stop2[0] = 0x07; stop2[1] = 0x17; stop2[2] = 0x08
         sendPacket(stop2, to: device)
 
+        // 2. Hardware profile zone colors for top buttons and auxiliary zones
+        for zone: UInt8 in [0x01, 0x02, 0x03, 0x04, 0x05, 0x11, 0x12, 0x13, 0x14, 0x15] {
+            var zPkt = [UInt8](repeating: 0, count: 64)
+            zPkt[0] = 0x07; zPkt[1] = 0x13; zPkt[2] = zone; zPkt[3] = 0x01
+            zPkt[4] = red; zPkt[5] = green; zPkt[6] = blue
+            sendPacket(zPkt, to: device)
+        }
+
+        // 3. Switch to Hardware Lighting Mode
         var hwPkt = [UInt8](repeating: 0, count: 64)
         hwPkt[0] = 0x07; hwPkt[1] = 0x04; hwPkt[2] = 0x01
         sendPacket(hwPkt, to: device)
@@ -233,7 +274,7 @@ public final class AperolK70Service: ObservableObject {
         sendPacket(hwLight, to: device)
 
         isWriting = false
-        statusMessage = "✓ Donanım Belleğine (EEPROM) Başarıyla Yazıldı!"
+        statusMessage = "✓ Successfully written to Hardware Flash (EEPROM)"
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
     }
 
@@ -246,7 +287,7 @@ public final class AperolK70Service: ObservableObject {
         flashColorToHardware(red: r, green: g, blue: b)
     }
 
-    /// Writes to hardware flash memory and immediately terminates the app (0 MB RAM footprint).
+    /// Writes to hardware flash memory and immediately terminates the app (0 MB residual RAM).
     public func flashAndQuit() {
         flashCurrentColor()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
