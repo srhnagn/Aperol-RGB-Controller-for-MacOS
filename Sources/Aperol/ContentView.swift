@@ -15,39 +15,39 @@ struct ContentView: View {
                     Image(nsImage: nsImg)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 40, height: 40)
-                        .clipShape(RoundedRectangle(cornerRadius: 9))
+                        .frame(width: 42, height: 42)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                         .shadow(color: Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.35), radius: 6)
                 } else {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 9)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(LinearGradient(
                                 colors: [Color(red: 1.0, green: 0.37, blue: 0.12), Color(red: 0.9, green: 0.15, blue: 0.0)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
-                            .frame(width: 40, height: 40)
+                            .frame(width: 42, height: 42)
                         Image(systemName: "flame.fill")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(.system(size: 22, weight: .bold))
                             .foregroundStyle(.white)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text("Aperol")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.primary)
                         Text("RGB")
                             .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.25))
+                            .background(Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.2))
                             .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                             .clipShape(Capsule())
                     }
                     Text("Corsair K70 MK.2 Hardware EEPROM Controller")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
@@ -57,20 +57,20 @@ struct ContentView: View {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(service.isConnected ? Color.green : Color.red)
-                        .frame(width: 7, height: 7)
+                        .frame(width: 8, height: 8)
                     Text(service.isConnected ? "K70 MK.2 Connected" : "Device Not Found")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(service.isConnected ? Color.green : Color.secondary)
                 }
-                .padding(.horizontal, 9)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.white.opacity(0.06))
+                .background(Color.primary.opacity(0.06))
                 .clipShape(Capsule())
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
 
-            Divider().opacity(0.25)
+            Divider().opacity(0.3)
 
             // Onboard Hardware Profile Slots (1, 2, 3)
             VStack(alignment: .leading, spacing: 8) {
@@ -79,24 +79,25 @@ struct ContentView: View {
                         Image(systemName: "memorychip")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
-                        Text("ONBOARD HARDWARE PROFILE")
-                            .font(.system(size: 9.5, weight: .bold))
+                        Text("3 ONBOARD HARDWARE PROFILES (8MB FLASH)")
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("K70 has 1 hardware mode (3 exist only on K95)")
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    Text("Active: Profile \(service.selectedSlot)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                 }
 
                 HStack(spacing: 8) {
-                    ForEach(1...1, id: \.self) { slot in
+                    ForEach(1...3, id: \.self) { slot in
                         slotCard(slot: slot)
                     }
                 }
             }
             .padding(12)
-            .background(Color.white.opacity(0.03))
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 18)
 
@@ -104,10 +105,10 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("COLOR PALETTE & REAL-TIME PREVIEW")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("Changes apply to keyboard volatile RAM in real time")
+                    Text("SRAM Live Preview (0 EEPROM Wear)")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                 }
@@ -117,27 +118,29 @@ struct ContentView: View {
                         .labelsHidden()
                         .frame(width: 38, height: 32)
                         .onChange(of: service.selectedColor) { _, newColor in
+                            guard service.hasUserInteractedWithColor else { return }
                             service.applyLiveColor(newColor)
                         }
 
                     HStack(spacing: 6) {
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: 5)
                             .fill(service.selectedColor)
                             .frame(width: 22, height: 22)
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.2), lineWidth: 0.5))
 
                         Text(service.currentHexColor)
                             .font(.system(size: 13, weight: .bold).monospaced())
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.primary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     Spacer()
 
                     Button {
+                        service.hasUserInteractedWithColor = true
                         service.applyLiveColor(service.selectedColor)
                     } label: {
                         HStack(spacing: 5) {
@@ -148,8 +151,8 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.08))
-                        .foregroundStyle(.white)
+                        .background(Color.primary.opacity(0.08))
+                        .foregroundStyle(.primary)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
@@ -166,19 +169,19 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.08))
-                        .foregroundStyle(.white)
+                        .background(Color.primary.opacity(0.08))
+                        .foregroundStyle(.primary)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
-                    .help("Give the keyboard back to its own firmware so the Profile and Brightness buttons work again")
+                    .help("Give the keyboard back to its hardware firmware so physical Profile and Brightness buttons respond again")
                 }
 
                 // Dynamic Preset Color Profiles (Customizable, Add & Delete)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("PRESET COLOR PROFILES")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundStyle(.secondary)
 
                         Spacer()
@@ -194,7 +197,7 @@ struct ContentView: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.2))
+                            .background(Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.18))
                             .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                             .clipShape(Capsule())
                         }
@@ -205,14 +208,14 @@ struct ContentView: View {
                             service.restoreDefaultPresets()
                         } label: {
                             Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 9.5))
+                                .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Restore factory presets")
                     }
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 6) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 6) {
                         ForEach(service.presets) { preset in
                             presetChip(preset: preset)
                         }
@@ -220,17 +223,18 @@ struct ContentView: View {
                 }
             }
             .padding(12)
-            .background(Color.white.opacity(0.04))
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 18)
 
             // Info note
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.12))
-                Text("Covers all 150 key positions, logo, Profile (125), Brightness (16), and WinLock (114).")
-                    .font(.system(size: 9.5))
+                Text("Covers all 150 positions: keys, logo, Profile (125), Brightness (16), and WinLock (114).")
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 18)
@@ -240,7 +244,7 @@ struct ContentView: View {
             // Status notification
             if let msg = service.statusMessage {
                 Text(msg)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(msg.contains("✓") ? Color.green : Color.secondary)
                     .padding(.horizontal, 18)
             }
@@ -253,17 +257,17 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "memorychip")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Save to Keyboard Memory")
+                        Text("Save to Profile \(service.selectedSlot) Memory")
                             .font(.system(size: 11.5, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.12))
-                    .foregroundStyle(.white)
+                    .background(Color.primary.opacity(0.09))
+                    .foregroundStyle(.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
-                .help("Writes selected color into keyboard's internal hardware flash memory (EEPROM).")
+                .help("Writes selected color into keyboard's Profile \(service.selectedSlot) flash memory (EEPROM).")
 
                 Button {
                     service.flashAndQuit()
@@ -283,10 +287,10 @@ struct ContentView: View {
                     ))
                     .foregroundStyle(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .shadow(color: Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.4), radius: 6)
+                    .shadow(color: Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.35), radius: 6)
                 }
                 .buttonStyle(.plain)
-                .help("Saves to selected hardware profile slot and terminates immediately (0 MB RAM).")
+                .help("Saves to Profile \(service.selectedSlot) hardware flash and terminates immediately (0 MB RAM).")
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 16)
@@ -300,23 +304,23 @@ struct ContentView: View {
         let isSaved = service.savedSlots.contains(slot)
 
         return Button {
-            service.selectedSlot = slot
+            service.switchToHardwareSlot(slot)
         } label: {
             HStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .fill(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12) : Color.white.opacity(0.1))
-                        .frame(width: 20, height: 20)
+                        .fill(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12) : Color.primary.opacity(0.08))
+                        .frame(width: 22, height: 22)
                     Text("\(slot)")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(isSelected ? .white : .secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Hardware Profile")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(isSelected ? .white : .primary)
-                    Text(isSaved ? "Written by Aperol" : "Not written yet")
+                    Text("Profile \(slot)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.2) : .primary)
+                    Text(isSaved ? "Saved by Aperol" : "Hardware Slot")
                         .font(.system(size: 8.5))
                         .foregroundStyle(isSaved ? Color.green : Color.secondary)
                 }
@@ -325,20 +329,20 @@ struct ContentView: View {
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.18) : Color.white.opacity(0.04))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.6) : Color.white.opacity(0.08), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .padding(.vertical, 8)
+            .background(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.12) : Color.primary.opacity(0.03))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.6) : Color.primary.opacity(0.08), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Preset Chip with Delete Action
+    // MARK: - Preset Chip with Edit & Delete Actions
 
     private func presetChip(preset: ColorPreset) -> some View {
         let isHovered = service.hoveredPresetId == preset.id
@@ -347,16 +351,18 @@ struct ContentView: View {
         return VStack(spacing: 4) {
             HStack(spacing: 4) {
                 Button {
+                    service.hasUserInteractedWithColor = true
                     service.selectedColor = preset.color
                     service.applyLiveColor(preset.color)
                 } label: {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(preset.color)
-                            .frame(width: 9, height: 9)
-                            .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.primary.opacity(0.2), lineWidth: 0.5))
                         Text(preset.name)
-                            .font(.system(size: 9.5, weight: .medium))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -368,7 +374,7 @@ struct ContentView: View {
                         service.editingPresetId = isEditing ? nil : preset.id
                     } label: {
                         Image(systemName: "pencil.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(isEditing ? Color(red: 1.0, green: 0.45, blue: 0.2) : .secondary)
                     }
                     .buttonStyle(.plain)
@@ -379,7 +385,7 @@ struct ContentView: View {
                             service.deletePreset(id: preset.id)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
@@ -410,7 +416,7 @@ struct ContentView: View {
 
                         Spacer()
 
-                        Button("Use current color") {
+                        Button("Use active") {
                             service.setPresetColor(id: preset.id, color: service.selectedColor)
                         }
                         .font(.system(size: 9.5))
@@ -422,9 +428,9 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.white.opacity(isHovered || isEditing ? 0.1 : 0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(isHovered || isEditing ? 0.08 : 0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
         .onHover { hovering in
             if hovering { service.hoveredPresetId = preset.id }
             else if service.hoveredPresetId == preset.id { service.hoveredPresetId = nil }
