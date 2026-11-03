@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Dedicated Hardware RGB Flash Programmer for Corsair K70 MK.2 Mechanical Keyboards</strong><br>
-  Open once · Select color with instant live preview · Write to onboard EEPROM · Exit (0 MB residual RAM).
+  Open once · Select color with instant volatile RAM stream · Commit to 3 onboard EEPROM slots · Exit (0 MB residual RAM).
 </p>
 
 <p align="center">
@@ -15,25 +15,31 @@
 
 ## ⚡ Key Features
 
-* **True Hardware Flash (EEPROM) Writing:** Commits your selected static 24-bit RGB color directly to the keyboard's internal flash storage (`lght_00.d` and hardware zones). The color persists across reboots, power cuts, and cable disconnections without needing any software daemon.
-* **Instant Real-Time Preview:** As soon as you pick a color or click a preset, lighting updates across the physical keyboard in real time over USB HID without waiting for manual confirmation.
-* **Complete Hardware Coverage (All 150 Key/Zone Positions):**
+* **3 Onboard Hardware Profile Slots:** Corsair K70 MK.2 features 3 independent onboard hardware memory slots (`lght_00.d`, `lght_01.d`, `lght_02.d`). Aperol allows you to target any of the 3 slots individually. Switch between your written profiles at any time using the keyboard's physical **Profile Button (`Key 125`)** on the top-left panel!
+* **Pure Volatile RAM Real-Time Streaming:** Selecting or sliding colors streams 24-bit RGB values directly to volatile device SRAM over USB HID. **Zero flash writes occur during live preview**, completely eliminating EEPROM exhaustion, lockups, and controller latency.
+* **Manual Hardware Flash (EEPROM) Commit:** Colors are committed to non-volatile flash memory only when you explicitly press **"Save to Hardware Slot"** or **"Save & Quit"**. The color persists across reboots, power cuts, and cable disconnections.
+* **Non-Intrusive Launch:** Connecting or launching Aperol will **never** overwrite your keyboard's active lighting profile. It passively initializes USB communication and waits for your input.
+* **Customizable Color Presets (+ and Delete):** Add any currently selected color as a new preset with a single click on `+ Add Current Color`. Delete presets anytime by hovering over the chip. All presets persist automatically across app sessions.
+* **Complete Hardware Coverage (150 Key/Zone Positions):**
   * Profile Switch Button LED (`Key 125`)
   * Brightness Button LED (`Key 16`)
   * Windows Lock Button LED (`Key 114`)
-  * Corsair Logo & Media Keys
+  * Corsair Illuminated Logo & Media Keys
   * Complete 104/105-key keyboard matrix
-* **0 MB Residual RAM Architecture:** Does not run as a permanent daemon. When you are finished, **"Save to Flash & Quit"** commits the lighting to the hardware microcontroller and instantly terminates the process.
-* **Native macOS Color Palette:** Full spectrum color wheel, sliders, hex input, and eyedropper support via native SwiftUI ColorPicker.
-* **Iconic Hardware Presets:**
-  * **Pure Red:** `#FF0000` (RGB 255, 0, 0)
-  * **Ice White:** `#9ADCE7` (RGB 154, 220, 231)
-  * **Night Vision Green:** `#7BFF00` (RGB 123, 255, 0)
-  * **Aperol Spritz:** `#F03C00` (RGB 240, 60, 0)
-  * **Samogon Emerald:** `#00E74F` (RGB 0, 231, 79)
-  * **Amber Gold:** `#FFA000` (RGB 255, 160, 0)
-  * **Cyber Magenta:** `#D946EF` (RGB 217, 70, 239)
-  * **Stealth:** `#000000` (All LEDs turned completely off)
+* **0 MB Residual RAM Architecture:** Does not run as a permanent background daemon. When you are finished, **"Save to Slot & Quit"** commits the lighting to the hardware microcontroller and instantly terminates the process.
+
+---
+
+## 🎨 Calibrated Color Profiles
+
+* **Night Vision Green:** `#46FF00` (RGB 70, 255, 0) — Phosphor night-vision green
+* **Ice White:** `#9ADCE7` (RGB 154, 220, 231) — Crisp glacial white
+* **Aperol Spritz:** `#F03C00` (RGB 240, 60, 0) — Signature Italian aperitivo orange
+* **Samogon Emerald:** `#00E74F` (RGB 0, 231, 79) — Deep radiant emerald
+* **Pure Red:** `#FF0000` (RGB 255, 0, 0)
+* **Amber Gold:** `#FFA000` (RGB 255, 160, 0)
+* **Cyber Magenta:** `#D946EF` (RGB 217, 70, 239)
+* **Stealth:** `#000000` (All LEDs turned completely off)
 
 ---
 

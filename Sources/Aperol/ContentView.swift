@@ -7,16 +7,15 @@ struct ContentView: View {
     @ObservedObject private var service = AperolK70Service.shared
 
     var body: some View {
-        VStack(spacing: 16) {
-            // Header with App Branding and USB Status
+        VStack(spacing: 14) {
+            // Header with App Branding and USB Connection Status
             HStack(spacing: 12) {
-                // App Icon Presentation
                 if let iconUrl = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
                    let nsImg = NSImage(contentsOf: iconUrl) {
                     Image(nsImage: nsImg)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 42, height: 42)
+                        .frame(width: 40, height: 40)
                         .clipShape(RoundedRectangle(cornerRadius: 9))
                         .shadow(color: Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.35), radius: 6)
                 } else {
@@ -27,7 +26,7 @@ struct ContentView: View {
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
-                            .frame(width: 42, height: 42)
+                            .frame(width: 40, height: 40)
                         Image(systemName: "flame.fill")
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
@@ -54,7 +53,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                // USB Connection Status Indicator
+                // USB Connection Status
                 HStack(spacing: 6) {
                     Circle()
                         .fill(service.isConnected ? Color.green : Color.red)
@@ -69,24 +68,51 @@ struct ContentView: View {
                 .clipShape(Capsule())
             }
             .padding(.horizontal, 18)
-            .padding(.top, 18)
+            .padding(.top, 16)
 
-            Divider().opacity(0.3)
+            Divider().opacity(0.25)
 
-            // Main Color Configuration Card
-            VStack(alignment: .leading, spacing: 14) {
+            // Onboard Hardware Profile Slots (1, 2, 3)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "memorychip")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
+                        Text("ONBOARD HARDWARE PROFILE SLOTS")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("Capacity: 3 Profiles Max (Hardware Switchable)")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(1...3, id: \.self) { slot in
+                        slotCard(slot: slot)
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.white.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 18)
+
+            // Live Color Palette & Picker
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("COLOR PALETTE & REAL-TIME PREVIEW")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("Changes apply to keyboard instantly")
+                    Text("Changes apply to keyboard volatile RAM in real time")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
                 }
 
                 HStack(spacing: 12) {
-                    // Native macOS ColorPicker with full spectrum, sliders & eyedropper
                     ColorPicker("", selection: $service.selectedColor, supportsOpacity: false)
                         .labelsHidden()
                         .frame(width: 38, height: 32)
@@ -94,7 +120,6 @@ struct ContentView: View {
                             service.applyLiveColor(newColor)
                         }
 
-                    // Hex Preview Badge
                     HStack(spacing: 6) {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(service.selectedColor)
@@ -112,7 +137,6 @@ struct ContentView: View {
 
                     Spacer()
 
-                    // Quick Refresh / Re-sync Button
                     Button {
                         service.applyLiveColor(service.selectedColor)
                     } label: {
@@ -129,33 +153,60 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
-                    .help("Re-send lighting packets to all keys and top buttons")
+                    .help("Re-send volatile color stream across all 150 positions")
                 }
 
-                // Quick Color Preset Grid
+                // Dynamic Preset Color Profiles (Customizable, Add & Delete)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("PRESET COLOR PROFILES")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("PRESET COLOR PROFILES")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 125))], spacing: 6) {
-                        presetChip(name: "Pure Red", color: Color(red: 1.0, green: 0.0, blue: 0.0))
-                        presetChip(name: "Ice White", color: Color(red: 154.0 / 255.0, green: 220.0 / 255.0, blue: 231.0 / 255.0))
-                        presetChip(name: "Night Vision Green", color: Color(red: 123.0 / 255.0, green: 255.0 / 255.0, blue: 0.0))
-                        presetChip(name: "Aperol Spritz", color: Color(red: 240.0 / 255.0, green: 60.0 / 255.0, blue: 0.0))
-                        presetChip(name: "Samogon", color: Color(red: 0.0, green: 231.0 / 255.0, blue: 79.0 / 255.0))
-                        presetChip(name: "Amber Gold", color: Color(red: 1.0, green: 0.63, blue: 0.0))
-                        presetChip(name: "Cyber Magenta", color: Color(red: 0.85, green: 0.27, blue: 0.94))
-                        presetChip(name: "Stealth (Off)", color: .black)
+                        Spacer()
+
+                        Button {
+                            service.addCurrentColorAsPreset()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Add Current Color")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.2))
+                            .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Save the active color as a new custom preset")
+
+                        Button {
+                            service.restoreDefaultPresets()
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Restore factory presets")
+                    }
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 6) {
+                        ForEach(service.presets) { preset in
+                            presetChip(preset: preset)
+                        }
                     }
                 }
             }
-            .padding(14)
+            .padding(12)
             .background(Color.white.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 18)
 
-            // Hardware Coverage Note
+            // Info note
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 10))
@@ -176,15 +227,15 @@ struct ContentView: View {
                     .padding(.horizontal, 18)
             }
 
-            // Bottom Primary Action Buttons
+            // Bottom Primary Hardware Write Buttons
             HStack(spacing: 10) {
                 Button {
-                    service.flashCurrentColor()
+                    service.flashColorToHardware(slot: service.selectedSlot)
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "memorychip")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Save to Flash (EEPROM)")
+                        Text("Save to Hardware Slot \(service.selectedSlot)")
                             .font(.system(size: 11.5, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -194,7 +245,7 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
-                .help("Writes the active color to hardware memory so it persists across reboots and disconnections.")
+                .help("Writes selected color into keyboard's internal hardware flash memory (EEPROM).")
 
                 Button {
                     service.flashAndQuit()
@@ -202,7 +253,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "power")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Save to Flash & Quit")
+                        Text("Save to Slot \(service.selectedSlot) & Quit")
                             .font(.system(size: 11.5, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
@@ -217,33 +268,100 @@ struct ContentView: View {
                     .shadow(color: Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.4), radius: 6)
                 }
                 .buttonStyle(.plain)
-                .help("Commits color to hardware memory and terminates immediately (0 MB residual RAM footprint).")
+                .help("Saves to selected hardware profile slot and terminates immediately (0 MB RAM).")
             }
             .padding(.horizontal, 18)
-            .padding(.bottom, 18)
+            .padding(.bottom, 16)
         }
     }
 
-    private func presetChip(name: String, color: Color) -> some View {
-        Button {
-            service.selectedColor = color
-            service.applyLiveColor(color)
+    // MARK: - Slot Card
+
+    private func slotCard(slot: Int) -> some View {
+        let isSelected = service.selectedSlot == slot
+        let isSaved = service.savedSlots.contains(slot)
+
+        return Button {
+            service.selectedSlot = slot
         } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-                    .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
-                Text(name)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .lineLimit(1)
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12) : Color.white.opacity(0.1))
+                        .frame(width: 20, height: 20)
+                    Text("\(slot)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(isSelected ? .white : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Profile \(slot)")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(isSelected ? .white : .primary)
+                    Text(isSaved ? "Saved in EEPROM" : "Slot Available")
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(isSaved ? Color.green : Color.secondary)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.18) : Color.white.opacity(0.04))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(isSelected ? Color(red: 1.0, green: 0.37, blue: 0.12).opacity(0.6) : Color.white.opacity(0.08), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Preset Chip with Delete Action
+
+    private func presetChip(preset: ColorPreset) -> some View {
+        let isHovered = service.hoveredPresetId == preset.id
+
+        return HStack(spacing: 4) {
+            Button {
+                service.selectedColor = preset.color
+                service.applyLiveColor(preset.color)
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(preset.color)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+
+                    Text(preset.name)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if isHovered && service.presets.count > 1 {
+                Button {
+                    service.deletePreset(id: preset.id)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Delete this preset")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(isHovered ? 0.1 : 0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .onHover { hovering in
+            service.hoveredPresetId = hovering ? preset.id : nil
+        }
     }
 }
