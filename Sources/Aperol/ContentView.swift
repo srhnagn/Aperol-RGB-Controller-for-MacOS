@@ -84,7 +84,7 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("Capacity: 3 Profiles Max (Hardware Switchable)")
+                    Text("Status is tracked by Aperol, not read from the keyboard")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -154,6 +154,24 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Re-send volatile color stream across all 150 positions")
+
+                    Button {
+                        service.releaseToHardwareMode()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("Release")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.08))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Give the keyboard back to its own firmware so the Profile and Brightness buttons work again")
                 }
 
                 // Dynamic Preset Color Profiles (Customizable, Add & Delete)
@@ -298,7 +316,7 @@ struct ContentView: View {
                     Text("Profile \(slot)")
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(isSelected ? .white : .primary)
-                    Text(isSaved ? "Saved in EEPROM" : "Slot Available")
+                    Text(isSaved ? "Written by Aperol" : "Not written yet")
                         .font(.system(size: 8.5))
                         .foregroundStyle(isSaved ? Color.green : Color.secondary)
                 }
@@ -324,44 +342,92 @@ struct ContentView: View {
 
     private func presetChip(preset: ColorPreset) -> some View {
         let isHovered = service.hoveredPresetId == preset.id
+        let isEditing = service.editingPresetId == preset.id
 
-        return HStack(spacing: 4) {
-            Button {
-                service.selectedColor = preset.color
-                service.applyLiveColor(preset.color)
-            } label: {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(preset.color)
-                        .frame(width: 9, height: 9)
-                        .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
-
-                    Text(preset.name)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-
-            if isHovered && service.presets.count > 1 {
+        return VStack(spacing: 4) {
+            HStack(spacing: 4) {
                 Button {
-                    service.deletePreset(id: preset.id)
+                    service.selectedColor = preset.color
+                    service.applyLiveColor(preset.color)
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(preset.color)
+                            .frame(width: 9, height: 9)
+                            .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                        Text(preset.name)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
-                .help("Delete this preset")
+
+                if isHovered || isEditing {
+                    Button {
+                        service.editingPresetId = isEditing ? nil : preset.id
+                    } label: {
+                        Image(systemName: "pencil.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(isEditing ? Color(red: 1.0, green: 0.45, blue: 0.2) : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit this preset")
+
+                    if service.presets.count > 1 {
+                        Button {
+                            service.deletePreset(id: preset.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete this preset")
+                    }
+                }
+            }
+
+            if isEditing {
+                VStack(spacing: 5) {
+                    TextField("Name", text: Binding(
+                        get: { preset.name },
+                        set: { service.renamePreset(id: preset.id, name: $0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 10))
+
+                    HStack(spacing: 6) {
+                        ColorPicker("", selection: Binding(
+                            get: { preset.color },
+                            set: { service.setPresetColor(id: preset.id, color: $0) }
+                        ), supportsOpacity: false)
+                        .labelsHidden()
+
+                        Text(preset.hexString)
+                            .font(.system(size: 9.5, weight: .semibold).monospaced())
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("Use current color") {
+                            service.setPresetColor(id: preset.id, color: service.selectedColor)
+                        }
+                        .font(.system(size: 9.5))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.2))
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.white.opacity(isHovered ? 0.1 : 0.05))
+        .background(Color.white.opacity(isHovered || isEditing ? 0.1 : 0.05))
         .clipShape(RoundedRectangle(cornerRadius: 5))
         .onHover { hovering in
-            service.hoveredPresetId = hovering ? preset.id : nil
+            if hovering { service.hoveredPresetId = preset.id }
+            else if service.hoveredPresetId == preset.id { service.hoveredPresetId = nil }
         }
     }
 }

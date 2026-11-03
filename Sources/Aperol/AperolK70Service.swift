@@ -65,16 +65,22 @@ public final class AperolK70Service: ObservableObject {
     @Published public var savedSlots: Set<Int> = [1] // Slots written to hardware
     @Published public var presets: [ColorPreset] = []
     @Published public var hoveredPresetId: UUID? = nil
+    @Published public var editingPresetId: UUID? = nil
+    @Published public private(set) var isStreaming: Bool = false
 
     private var hidManager: IOHIDManager?
     private var connectedDevice: IOHIDDevice?
     private var isInitialized: Bool = false
     private var lastStreamTime: Date = Date.distantPast
+    private var zoneWorkItem: DispatchWorkItem?
 
     private init() {
         loadPresets()
         loadSavedSlots()
         setupHIDManager()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.releaseToHardwareMode() }
+        }
     }
 
     // MARK: - Presets Storage
@@ -120,6 +126,21 @@ public final class AperolK70Service: ObservableObject {
 
     public func deletePreset(at offsets: IndexSet) {
         presets.remove(atOffsets: offsets)
+        savePresets()
+    }
+
+    public func renamePreset(id: UUID, name: String) {
+        guard let i = presets.firstIndex(where: { $0.id == id }) else { return }
+        presets[i].name = name
+        savePresets()
+    }
+
+    public func setPresetColor(id: UUID, color: Color) {
+        guard let i = presets.firstIndex(where: { $0.id == id }) else { return }
+        let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        presets[i].red = Double(ns.redComponent)
+        presets[i].green = Double(ns.greenComponent)
+        presets[i].blue = Double(ns.blueComponent)
         savePresets()
     }
 
@@ -209,8 +230,8 @@ public final class AperolK70Service: ObservableObject {
         self.isConnected = true
         self.statusMessage = "Connected: \(deviceName)"
 
-        // Initialize hardware mapping into software mode passively without forcing default color
-        initializeDeviceIfNeeded()
+        // Do NOT touch the keyboard on attach: the keyboard keeps its own stored profile
+        // until the user actually picks a color.
     }
 
     private func deviceDetached(_ device: IOHIDDevice) {
@@ -308,7 +329,40 @@ public final class AperolK70Service: ObservableObject {
         streamChannel(val: g, channel: 2, finishVal: 1)
         streamChannel(val: b, channel: 3, finishVal: 2)
 
+        isStreaming = true
+        scheduleZoneWrite(r: r, g: g, b: b, device: device)
         statusMessage = "Live Preview: \(currentHexColor)"
+    }
+
+    /// Top buttons (Profile / Brightness / WinLock), logo and media zones use separate zone packets.
+    /// Debounced so they are sent once after the color stops changing, not on every slider tick.
+    private func scheduleZoneWrite(r: UInt8, g: UInt8, b: UInt8, device: IOHIDDevice) {
+        zoneWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard self.connectedDevice != nil else { return }
+                for zone: UInt8 in [0x01, 0x02, 0x03, 0x04, 0x05, 0x11, 0x12, 0x13, 0x14, 0x15] {
+                    var zPkt = [UInt8](repeating: 0, count: 64)
+                    zPkt[0] = 0x07; zPkt[1] = 0x13; zPkt[2] = zone; zPkt[3] = 0x01
+                    zPkt[4] = r; zPkt[5] = g; zPkt[6] = b
+                    self.sendPacket(zPkt, to: device)
+                }
+            }
+        }
+        zoneWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: item)
+    }
+
+    /// Hands the keyboard back to its own firmware (stored profile, Profile and Brightness buttons work again).
+    public func releaseToHardwareMode() {
+        zoneWorkItem?.cancel()
+        guard let device = connectedDevice, isStreaming else { return }
+        sendPacket([0x07, 0x04, 0x01], to: device)
+        sendPacket([0x07, 0x05, 0x01], to: device)
+        isStreaming = false
+        isInitialized = false
+        statusMessage = "Keyboard released to its own firmware"
     }
 
     // MARK: - Hardware Flash (EEPROM) Commit (Manual Only)
@@ -380,6 +434,8 @@ public final class AperolK70Service: ObservableObject {
         hwLight[0] = 0x07; hwLight[1] = 0x05; hwLight[2] = 0x01
         sendPacket(hwLight, to: device)
 
+        isStreaming = false
+        isInitialized = false
         markSlotSaved(targetSlot)
         isWriting = false
         statusMessage = "✓ Written to Hardware Profile Slot \(targetSlot) (EEPROM)"

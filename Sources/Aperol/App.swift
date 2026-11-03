@@ -11,7 +11,7 @@ struct AperolApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(width: 440, height: 480)
+                .frame(width: 460, height: 660)
                 .background(Color(red: 0.05, green: 0.05, blue: 0.06))
         }
         .windowResizability(.contentSize)
