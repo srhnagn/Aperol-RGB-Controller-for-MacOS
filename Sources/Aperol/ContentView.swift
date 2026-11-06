@@ -7,40 +7,43 @@ struct ContentView: View {
     @ObservedObject private var service = AperolK70Service.shared
 
     private let aperolOrange = Color(red: 242.0 / 255.0, green: 107.0 / 255.0, blue: 30.0 / 255.0) // #F26B1E
-    private let cardBackground = Color(red: 22.0 / 255.0, green: 24.0 / 255.0, blue: 28.0 / 255.0)
-    private let cardBorder = Color.white.opacity(0.07)
+    private let cardBackground = Color(red: 21.0 / 255.0, green: 23.0 / 255.0, blue: 27.0 / 255.0)
+    private let cardBorder = Color.white.opacity(0.065)
 
     var body: some View {
-        VStack(spacing: 12) {
-            // MARK: - Header
-            headerView
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 12) {
+                // MARK: - Header
+                headerView
 
-            // MARK: - Section 1: 3 Onboard Hardware Profiles
-            hardwareSlotsSection
+                // MARK: - Section 1: 3 Onboard Hardware Profiles
+                hardwareSlotsSection
 
-            // MARK: - Section 2: Color & Real-Time Adjuster
-            colorAdjusterSection
+                // MARK: - Section 2: Color & Real-Time Adjuster
+                colorAdjusterSection
 
-            // MARK: - Section 3: Preset Palettes
-            presetsSection
+                // MARK: - Section 3: Top Hardware Buttons & Win-Lock
+                topButtonsSection
 
-            Spacer(minLength: 4)
+                // MARK: - Section 4: Preset Palettes
+                presetsSection
 
-            // MARK: - Status Toast
-            if let msg = service.statusMessage {
-                statusBanner(msg: msg)
+                // MARK: - Status Toast
+                if let msg = service.statusMessage {
+                    statusBanner(msg: msg)
+                }
+
+                // MARK: - Bottom Actions
+                bottomActionsView
             }
-
-            // MARK: - Bottom Actions
-            bottomActionsView
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
         .background(
             LinearGradient(
                 colors: [
-                    Color(red: 17.0 / 255.0, green: 18.0 / 255.0, blue: 21.0 / 255.0),
-                    Color(red: 12.0 / 255.0, green: 13.0 / 255.0, blue: 15.0 / 255.0)
+                    Color(red: 16.0 / 255.0, green: 17.0 / 255.0, blue: 20.0 / 255.0),
+                    Color(red: 11.0 / 255.0, green: 12.0 / 255.0, blue: 14.0 / 255.0)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -89,9 +92,9 @@ struct ContentView: View {
                         .clipShape(Capsule())
                 }
 
-                Text("Hardware EEPROM Controller")
+                Text("Hardware Flash & EEPROM Controller")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color(white: 0.6))
+                    .foregroundStyle(Color(white: 0.55))
             }
 
             Spacer()
@@ -215,14 +218,14 @@ struct ContentView: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(aperolOrange)
 
-                    Text("COLOR & REAL-TIME PREVIEW")
+                    Text("MAIN KEYS COLOR & PREVIEW")
                         .font(.system(size: 9.5, weight: .bold).monospaced())
                         .foregroundStyle(Color(white: 0.55))
                 }
 
                 Spacer()
 
-                Text("SRAM Live Stream (0 Flash Wear)")
+                Text("Volatile Live Stream")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(aperolOrange.opacity(0.85))
             }
@@ -342,6 +345,165 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    // MARK: - Top Buttons & WinLock Section
+
+    private var topButtonsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: "slider.horizontal.2.square.on.square")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(aperolOrange)
+
+                    Text("TOP HARDWARE BUTTONS & WIN-LOCK")
+                        .font(.system(size: 9.5, weight: .bold).monospaced())
+                        .foregroundStyle(Color(white: 0.55))
+                }
+
+                Spacer()
+
+                Button {
+                    service.syncAllTopButtonsToSelectedColor()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 8.5))
+                        Text("Sync with Profile")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(aperolOrange.opacity(0.12))
+                    .foregroundStyle(aperolOrange)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Set all top hardware button colors to match the currently selected profile")
+            }
+
+            // WinLock Action Disable Toggle
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: service.isWinLockDisabled ? "lock.slash.fill" : "lock.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(service.isWinLockDisabled ? aperolOrange : Color(white: 0.6))
+
+                        Text("Disable Physical WinLock Key Action")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                    Text("Pressing physical lock key has zero effect; never locks macOS Option/Win keys")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Color(white: 0.5))
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $service.isWinLockDisabled)
+                    .toggleStyle(SwitchToggleStyle(tint: aperolOrange))
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.white.opacity(0.03))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.05), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // 2x2 Grid of Top Button Colors
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                // 1. WinLock Locked
+                topButtonColorCard(
+                    title: "WinLock (Locked)",
+                    icon: "lock.fill",
+                    color: $service.winLockLockedColor
+                )
+
+                // 2. WinLock Unlocked with "Match" helper
+                topButtonColorCard(
+                    title: "WinLock (Unlocked)",
+                    icon: "lock.open.fill",
+                    color: $service.winLockUnlockedColor,
+                    accessoryButton: {
+                        Button {
+                            service.matchWinLockUnlockedToLocked()
+                        } label: {
+                            Text("Match Locked")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(aperolOrange.opacity(0.15))
+                                .foregroundStyle(aperolOrange)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Make unlocked color identical to locked color for uniform lighting")
+                    }
+                )
+
+                // 3. Profile Button
+                topButtonColorCard(
+                    title: "Profile Button",
+                    icon: "person.crop.circle",
+                    color: $service.profileButtonColor
+                )
+
+                // 4. Brightness Button
+                topButtonColorCard(
+                    title: "Brightness Button",
+                    icon: "sun.max.fill",
+                    color: $service.brightnessButtonColor
+                )
+            }
+        }
+        .padding(11)
+        .background(cardBackground)
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func topButtonColorCard<Accessory: View>(
+        title: String,
+        icon: String,
+        color: Binding<Color>,
+        @ViewBuilder accessoryButton: () -> Accessory = { EmptyView() }
+    ) -> some View {
+        let hex = AperolK70Service.hexFromColor(color.wrappedValue)
+        return HStack(spacing: 8) {
+            ColorPicker("", selection: color, supportsOpacity: false)
+                .labelsHidden()
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Image(systemName: icon)
+                        .font(.system(size: 9))
+                        .foregroundStyle(aperolOrange)
+
+                    Text(title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(white: 0.9))
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 5) {
+                    Text(hex)
+                        .font(.system(size: 8.5, weight: .medium).monospaced())
+                        .foregroundStyle(Color(white: 0.5))
+
+                    accessoryButton()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.03))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.05), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     // MARK: - Preset Palettes Section
 
     private var presetsSection: some View {
@@ -385,7 +547,7 @@ struct ContentView: View {
                         .foregroundStyle(Color(white: 0.45))
                 }
                 .buttonStyle(.plain)
-                .help("Restore factory color presets")
+                .help("Restore curated factory color presets")
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 102))], spacing: 6) {
