@@ -81,7 +81,6 @@ public final class AperolK70Service: ObservableObject {
 
     public static let maxOnboardSlots: Int = 3 // K70 MK.2 has 3 onboard hardware profiles in 8MB flash
 
-    private static let masterProfileUUID = UUID(uuidString: "C085A100-0000-0000-0000-000000000000")!
     private static let slotUUIDs: [UUID] = [
         UUID(uuidString: "C085A101-0000-0000-0000-000000000001")!,
         UUID(uuidString: "C085A102-0000-0000-0000-000000000002")!,
@@ -490,106 +489,25 @@ public final class AperolK70Service: ObservableObject {
         // 1. Set Hardware Brightness (0x03 max)
         paced([0x07, 0x05, 0x02, 0x00, 0x03])
 
-        // 2. Save Mode Names (0: Master, 1: Slot 1, 2: Slot 2, 3: Slot 3)
-        func sendModeName(slot: UInt8, name: String) {
-            var namePkt = [UInt8](repeating: 0, count: 64)
-            namePkt[0] = 0x07; namePkt[1] = 0x16; namePkt[2] = 0x01; namePkt[3] = slot
-            if let nameData = name.data(using: .utf16LittleEndian) {
-                nameData.copyBytes(to: &namePkt[4], count: min(nameData.count, 56))
+        // 2. Register / Activate ALL 3 Hardware Profiles in Flash Memory (CMD 0x15)
+        // From libLegacyProtocols.dylib (NxpHardwareProfileStorageFeature::commitProfileInfo):
+        for s in 0...2 {
+            var desc = [UInt8](repeating: 0, count: 64)
+            desc[0] = 0x07
+            desc[1] = 0x15
+            desc[2] = UInt8(s) // 0, 1, 2
+            desc[3] = 0x00
+            withUnsafeBytes(of: Self.slotUUIDs[s].uuid) { raw in
+                desc.replaceSubrange(4..<4+raw.count, with: raw)
             }
-            paced(namePkt)
-        }
-        sendModeName(slot: 0, name: "K70 MK.2")
-        sendModeName(slot: 1, name: "Profile 1")
-        sendModeName(slot: 2, name: "Profile 2")
-        sendModeName(slot: 3, name: "Profile 3")
-
-        // 3. Save Mode 0 (Master Descriptor with total modecount = 3, active slot, max modes = 3)
-        var p0 = [UInt8](repeating: 0, count: 64)
-        p0[0] = 0x07; p0[1] = 0x15; p0[2] = 0x01; p0[3] = 0x00
-        withUnsafeBytes(of: Self.masterProfileUUID.uuid) { raw in
-            p0.replaceSubrange(4..<4+raw.count, with: raw)
-        }
-        p0[24] = 0x03; p0[25] = 0x00; p0[26] = 0x00; p0[27] = 0x00 // Total modes = 3
-        p0[28] = UInt8(activeTarget - 1); p0[29] = 0x00 // Active slot index (0..2)
-        p0[30] = 0x03; p0[31] = 0x00 // Max modes = 3
-        paced(p0)
-
-        // 4. Save Official NXP Profile Descriptors (CMD 0x15) for Slot 0, 1, 2 with Active Flag (0x01)
-        for s in 1...3 {
-            let slotIndex = UInt8(s - 1) // 0, 1, 2
-            var nxpDesc = [UInt8](repeating: 0, count: 64)
-            nxpDesc[0] = 0x07; nxpDesc[1] = 0x15; nxpDesc[2] = slotIndex; nxpDesc[3] = 0x00
-            withUnsafeBytes(of: Self.slotUUIDs[s - 1].uuid) { raw in
-                nxpDesc.replaceSubrange(4..<4+raw.count, with: raw)
-            }
-            nxpDesc[20] = 0x0D; nxpDesc[21] = 0x00; nxpDesc[22] = 0x00 // Size
-            nxpDesc[23] = 0x01 // ACTIVE / VALID BIT (Mandatory for hardware button cycle)
-            paced(nxpDesc)
-
-            // Legacy compatibility descriptor
-            var legDesc = [UInt8](repeating: 0, count: 64)
-            legDesc[0] = 0x07; legDesc[1] = 0x15; legDesc[2] = 0x01; legDesc[3] = UInt8(s)
-            withUnsafeBytes(of: Self.slotUUIDs[s - 1].uuid) { raw in
-                legDesc.replaceSubrange(4..<4+raw.count, with: raw)
-            }
-            legDesc[20] = 0x01; legDesc[21] = 0x00; legDesc[22] = 0x00; legDesc[23] = 0x01
-            paced(legDesc)
+            desc[20] = 0x01
+            desc[21] = 0x00
+            desc[22] = 0x00
+            desc[23] = 0x01 // ACTIVE / VALID BIT (Mandatory for physical button cycle)
+            paced(desc)
         }
 
-        // 5. Write 3-Profile Directory Table (0x07, 0x17, 0x04, 0x00) with all 3 slots marked valid
-        var dirPkt = [UInt8](repeating: 0, count: 64)
-        dirPkt[0] = 0x07; dirPkt[1] = 0x17; dirPkt[2] = 0x04; dirPkt[3] = 0x00
-        // Slot 1
-        withUnsafeBytes(of: Self.slotUUIDs[0].uuid) { raw in dirPkt.replaceSubrange(4..<4+raw.count, with: raw) }
-        dirPkt[20] = 0x19; dirPkt[21] = 0x00; dirPkt[22] = 0x00; dirPkt[23] = 0x01
-        // Slot 2
-        withUnsafeBytes(of: Self.slotUUIDs[1].uuid) { raw in dirPkt.replaceSubrange(24..<24+raw.count, with: raw) }
-        dirPkt[40] = 0x09; dirPkt[41] = 0x00; dirPkt[42] = 0x00; dirPkt[43] = 0x01
-        // Slot 3
-        withUnsafeBytes(of: Self.slotUUIDs[2].uuid) { raw in dirPkt.replaceSubrange(44..<44+raw.count, with: raw) }
-        dirPkt[60] = 0x01; dirPkt[61] = 0x00; dirPkt[62] = 0x00; dirPkt[63] = 0x01
-        paced(dirPkt)
-
-        // 6. Write Lighting Count File "lghtcnt.cnt" (count = 1)
-        var cntOpen = [UInt8](repeating: 0, count: 64)
-        cntOpen[0] = 0x07; cntOpen[1] = 0x17; cntOpen[2] = 0x05; cntOpen[3] = 0x00
-        for (i, b) in "lghtcnt.cnt".utf8.enumerated() { cntOpen[4 + i] = b }
-        paced(cntOpen)
-
-        var cntData = [UInt8](repeating: 0, count: 64)
-        cntData[0] = 0x7F; cntData[1] = 0x01; cntData[2] = 0x04; cntData[3] = 0x00
-        cntData[4] = 0x01; cntData[5] = 0x00; cntData[6] = 0x00; cntData[7] = 0x00
-        paced(cntData)
-        paced([0x07, 0x17, 0x09]) // Flush
-        paced([0x07, 0x17, 0x08]) // Close
-
-        // 7. Write Hardware Files "lght_0X.d" for ALL 3 slots (Static Effect = 0x07)
-        for s in 1...3 {
-            let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
-            var fOpen = [UInt8](repeating: 0, count: 64)
-            fOpen[0] = 0x07; fOpen[1] = 0x17; fOpen[2] = 0x05; fOpen[3] = 0x00
-            let filename = "lght_0\(s - 1).d"
-            for (i, b) in filename.utf8.enumerated() {
-                fOpen[4 + i] = b
-            }
-            paced(fOpen)
-
-            var streamPkt = [UInt8](repeating: 0, count: 64)
-            streamPkt[0] = 0x7F; streamPkt[1] = 0x01; streamPkt[2] = 0x0D; streamPkt[3] = 0x00
-            streamPkt[4] = 0x07 // Static effect enum in iCUE
-            streamPkt[5] = 0x00
-            streamPkt[6] = 0x02 // Speed
-            streamPkt[7] = 0x00; streamPkt[8] = 0x00
-            streamPkt[9] = col.r; streamPkt[10] = col.g; streamPkt[11] = col.b; streamPkt[12] = 0xFF
-            streamPkt[13] = 0x00; streamPkt[14] = 0x00; streamPkt[15] = 0x00; streamPkt[16] = 0x00
-            paced(streamPkt)
-
-            paced([0x07, 0x17, 0x09]) // Flush
-            paced([0x07, 0x17, 0x08]) // Close
-        }
-
-        // 8. Save Full 24-bit RGB Matrix for ALL 3 SLOTS
+        // 3. Save Full 24-bit RGB Matrix for ALL 3 SLOTS
         for s in 1...3 {
             let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
             for (channel, val) in [(UInt8(1), col.r), (UInt8(2), col.g), (UInt8(3), col.b)] {
@@ -617,7 +535,7 @@ public final class AperolK70Service: ObservableObject {
             paced(endSave)
         }
 
-        // 9. Write WinLock ON and OFF Custom Colors for ALL 3 SLOTS (CMD 0x14 SUB 0x07 & 0x06)
+        // 4. Write WinLock ON and OFF Custom Colors for ALL 3 SLOTS (CMD 0x14 SUB 0x07 & 0x06)
         // This permanently programs the protected WinLock LED to match each profile in EEPROM!
         for s in 1...3 {
             let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
@@ -635,7 +553,7 @@ public final class AperolK70Service: ObservableObject {
             paced(winLockOff)
         }
 
-        // 10. Official NXP Commit Profile Changes (CMD 0x17 SUB 0x0E)
+        // 5. Official NXP Commit Profile Changes (CMD 0x17 SUB 0x0E)
         // Flushes non-volatile buffers and commits changes to hardware flash
         var nlpCommit = [UInt8](repeating: 0, count: 64)
         nlpCommit[0] = 0x07; nlpCommit[1] = 0x17; nlpCommit[2] = 0x0E; nlpCommit[3] = 0x00
@@ -644,11 +562,11 @@ public final class AperolK70Service: ObservableObject {
         // Allow MCU flash write cycle to settle
         Thread.sleep(forTimeInterval: 0.12)
 
-        // 11. Switch active slot to targetSlot (0-based)
+        // 6. Switch active slot to targetSlot (0-based)
         paced([0x07, 0x17, 0x0C, UInt8(activeTarget - 1)])
         Thread.sleep(forTimeInterval: 0.05)
 
-        // 12. Return to standalone hardware mode
+        // 7. Return to standalone hardware mode
         paced([0x07, 0x04, 0x01])
         paced([0x07, 0x05, 0x01])
 

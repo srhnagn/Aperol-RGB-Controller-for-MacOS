@@ -567,20 +567,28 @@ struct ContentView: View {
             }
 
             // Restore Helper
-            HStack {
+            HStack(spacing: 8) {
                 Button {
                     service.resetFactoryProfiles()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "wrench.and.screwdriver")
                             .font(.system(size: 9))
-                        Text("Rebuild All 3 Hardware Slots (Fix Skip / Missing Slot 3)")
+                        Text("Rebuild All 3 Hardware Slots")
                             .font(.system(size: 9.5, weight: .medium))
                     }
-                    .foregroundStyle(Color(white: 0.45))
+                    .foregroundStyle(Color(white: 0.55))
                 }
                 .buttonStyle(.plain)
-                .help("Re-initializes Slot 1 Red, Slot 2 Green, Slot 3 Ice White with active flags in hardware EEPROM")
+                .help("Re-initializes all 3 profiles with valid active flags in hardware EEPROM")
+
+                Text("•")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color(white: 0.25))
+
+                Text("Hold ESC while plugging USB (5s) for hardware factory reset")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color(white: 0.40))
             }
             .padding(.top, 2)
         }
