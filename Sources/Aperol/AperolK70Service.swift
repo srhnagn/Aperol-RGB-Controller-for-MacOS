@@ -58,8 +58,12 @@ public struct HardwareSlotColor: Codable, Equatable {
 
 /// Native IOKit USB HID controller for Corsair K70 MK.2 RGB keyboard.
 /// Fully controls 3 onboard hardware profiles (8MB onboard flash memory), volatile SRAM live streaming,
-/// and writes directly to hardware memory via OpenRGB lght_0X.d filesystem stream + NXP HWCLR command (FIELD 0x14)
-/// covering all 150 positions: all keys, logo, Profile (125), Brightness (16), and WinLock (114).
+/// and writes directly to hardware memory via reverse-engineered NXP flash protocol:
+/// - 3-Slot Directory Table & Active Descriptors (CMD 0x15 & 0x17)
+/// - Hardware Lighting Playback Files (lghtcnt.cnt + lght_0X.d)
+/// - Full 24-bit RGB Matrix (CMD 0x14 SUB 0x03) across all 150 positions
+/// - WinLock Custom ON/OFF Colors per slot (CMD 0x14 SUB 0x06 & 0x07)
+/// - Final NXP Profile Commit (CMD 0x17 SUB 0x0E)
 @MainActor
 public final class AperolK70Service: ObservableObject {
     public static let shared = AperolK70Service()
@@ -86,17 +90,18 @@ public final class AperolK70Service: ObservableObject {
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
-    @Published public var selectedColor: Color = Color(red: 240.0 / 255.0, green: 60.0 / 255.0, blue: 0.0)
+    @Published public var selectedColor: Color = Color(red: 242.0 / 255.0, green: 101.0 / 255.0, blue: 34.0 / 255.0)
     @Published public var brightness: Double = 1.0
     @Published public var statusMessage: String?
     @Published public var isWriting: Bool = false
     @Published public var selectedSlot: Int = 1 // Target slot: 1, 2, or 3
-    @Published public var savedSlots: Set<Int> = [] // Slots written to hardware by Aperol
+    @Published public var savedSlots: Set<Int> = [1, 2, 3] // Slots written to hardware by Aperol
     @Published public var slotProfiles: [Int: HardwareSlotColor] = [:]
     @Published public var presets: [ColorPreset] = []
     @Published public var hoveredPresetId: UUID? = nil
     @Published public var editingPresetId: UUID? = nil
     @Published public private(set) var isStreaming: Bool = false
+    @Published public var copiedHex: Bool = false
     public var hasUserInteractedWithColor: Bool = false
 
     private var hidManager: IOHIDManager?
@@ -119,20 +124,20 @@ public final class AperolK70Service: ObservableObject {
 
     private func loadPresets() {
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: "AperolColorPresets_v2"),
+        if let data = defaults.data(forKey: "AperolColorPresets_v3"),
            let decoded = try? JSONDecoder().decode([ColorPreset].self, from: data),
            !decoded.isEmpty {
             self.presets = decoded
         } else {
-            // Default initial presets with exact calibrated colors
+            // Curated, timeless colors that look exceptional on mechanical RGB backlights
             self.presets = [
-                ColorPreset(name: "Pure Red", red: 1.0, green: 0.0, blue: 0.0),
-                ColorPreset(name: "Night Vision Green", red: 70.0 / 255.0, green: 255.0 / 255.0, blue: 0.0), // 70, 255, 0
-                ColorPreset(name: "Ice White", red: 154.0 / 255.0, green: 220.0 / 255.0, blue: 231.0 / 255.0),
-                ColorPreset(name: "Aperol Spritz", red: 240.0 / 255.0, green: 60.0 / 255.0, blue: 0.0),
-                ColorPreset(name: "Samogon", red: 0.0, green: 231.0 / 255.0, blue: 79.0 / 255.0),
-                ColorPreset(name: "Amber Gold", red: 1.0, green: 160.0 / 255.0, blue: 0.0),
-                ColorPreset(name: "Cyber Magenta", red: 217.0 / 255.0, green: 70.0 / 255.0, blue: 239.0 / 255.0),
+                ColorPreset(name: "Aperol Spritz", red: 242.0 / 255.0, green: 101.0 / 255.0, blue: 34.0 / 255.0),
+                ColorPreset(name: "Pure Carmine", red: 1.0, green: 0.10, blue: 0.10),
+                ColorPreset(name: "Night Vision", red: 70.0 / 255.0, green: 1.0, blue: 0.0),
+                ColorPreset(name: "Ice Glacier", red: 154.0 / 255.0, green: 220.0 / 255.0, blue: 231.0 / 255.0),
+                ColorPreset(name: "Amber Warmth", red: 1.0, green: 150.0 / 255.0, blue: 0.0),
+                ColorPreset(name: "Deep Cyan", red: 0.0, green: 200.0 / 255.0, blue: 1.0),
+                ColorPreset(name: "Obsidian Dim", red: 40.0 / 255.0, green: 40.0 / 255.0, blue: 45.0 / 255.0),
                 ColorPreset(name: "Stealth (Off)", red: 0.0, green: 0.0, blue: 0.0)
             ]
             savePresets()
@@ -141,7 +146,7 @@ public final class AperolK70Service: ObservableObject {
 
     public func savePresets() {
         if let encoded = try? JSONEncoder().encode(presets) {
-            UserDefaults.standard.set(encoded, forKey: "AperolColorPresets_v2")
+            UserDefaults.standard.set(encoded, forKey: "AperolColorPresets_v3")
         }
     }
 
@@ -183,32 +188,34 @@ public final class AperolK70Service: ObservableObject {
     }
 
     public func restoreDefaultPresets() {
-        UserDefaults.standard.removeObject(forKey: "AperolColorPresets_v2")
+        UserDefaults.standard.removeObject(forKey: "AperolColorPresets_v3")
         loadPresets()
     }
 
     private func loadSavedSlots() {
-        if let array = UserDefaults.standard.array(forKey: "AperolSavedSlots") as? [Int] {
+        if let array = UserDefaults.standard.array(forKey: "AperolSavedSlots_v2") as? [Int] {
             self.savedSlots = Set(array)
+        } else {
+            self.savedSlots = [1, 2, 3]
         }
     }
 
     private func markSlotSaved(_ slot: Int) {
         savedSlots.insert(slot)
-        UserDefaults.standard.set(Array(savedSlots), forKey: "AperolSavedSlots")
+        UserDefaults.standard.set(Array(savedSlots), forKey: "AperolSavedSlots_v2")
     }
 
     private func loadSlotProfiles() {
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: "AperolSlotProfiles_v1"),
+        if let data = defaults.data(forKey: "AperolSlotProfiles_v2"),
            let decoded = try? JSONDecoder().decode([Int: HardwareSlotColor].self, from: data),
            !decoded.isEmpty {
             self.slotProfiles = decoded
         } else {
-            // Default 3 hardware profiles:
-            // Profile 1: Pure Red
+            // Factory defaults for all 3 hardware profiles:
+            // Profile 1: Pure Red (#FF0000)
             // Profile 2: Night Vision Green (70, 255, 0)
-            // Profile 3: Ice White (154, 220, 231)
+            // Profile 3: Ice Glacier White (154, 220, 231)
             self.slotProfiles = [
                 1: HardwareSlotColor(r: 255, g: 0, b: 0),
                 2: HardwareSlotColor(r: 70, g: 255, b: 0),
@@ -218,10 +225,24 @@ public final class AperolK70Service: ObservableObject {
         }
     }
 
-    private func saveSlotProfiles() {
+    public func saveSlotProfiles() {
         if let encoded = try? JSONEncoder().encode(slotProfiles) {
-            UserDefaults.standard.set(encoded, forKey: "AperolSlotProfiles_v1")
+            UserDefaults.standard.set(encoded, forKey: "AperolSlotProfiles_v2")
         }
+    }
+
+    public func resetFactoryProfiles() {
+        self.slotProfiles = [
+            1: HardwareSlotColor(r: 255, g: 0, b: 0),
+            2: HardwareSlotColor(r: 70, g: 255, b: 0),
+            3: HardwareSlotColor(r: 154, g: 220, b: 231)
+        ]
+        saveSlotProfiles()
+        if let current = slotProfiles[selectedSlot] {
+            selectedColor = current.color
+        }
+        flashAllProfilesToHardware(targetSlot: selectedSlot)
+        statusMessage = "✓ Restored & Flashed All 3 Factory Profiles"
     }
 
     // MARK: - HID Management
@@ -287,10 +308,10 @@ public final class AperolK70Service: ObservableObject {
 
         self.connectedDevice = device
         self.isConnected = true
-        self.statusMessage = "Connected: \(deviceName) (3 Onboard Profiles)"
+        self.statusMessage = "Connected: \(deviceName)"
 
-        // Do NOT touch or overwrite the keyboard on attach: the keyboard continues executing its stored profile
-        // until the user explicitly selects or modifies a color.
+        // Do NOT overwrite or touch the keyboard on attach: keyboard executes its onboard profile
+        // until the user interacts or modifies color.
     }
 
     private func deviceDetached(_ device: IOHIDDevice) {
@@ -348,11 +369,10 @@ public final class AperolK70Service: ObservableObject {
             sendPacket(pkt, to: device)
         }
 
-        // Allow MCU to settle
         Thread.sleep(forTimeInterval: 0.02)
     }
 
-    // MARK: - Volatile Real-Time Streaming (Zero EEPROM Writes)
+    // MARK: - Volatile Real-Time Streaming (Zero EEPROM Wear)
 
     /// Immediately applies the color to all keys, logo, and top buttons in volatile SRAM in real time.
     /// Strictly NEVER writes to EEPROM flash memory so it cannot wear or exhaust the flash controller.
@@ -397,7 +417,7 @@ public final class AperolK70Service: ObservableObject {
         statusMessage = "Live Preview: \(currentHexColor)"
     }
 
-    /// Hands the keyboard back to its own firmware (stored profile, Profile and Brightness buttons work again).
+    /// Hands the keyboard back to its own hardware firmware (stored profile, Profile and Brightness buttons work again).
     public func releaseToHardwareMode() {
         zoneWorkItem?.cancel()
         guard let device = connectedDevice, isStreaming else { return }
@@ -405,7 +425,7 @@ public final class AperolK70Service: ObservableObject {
         sendPacket([0x07, 0x05, 0x01], to: device)
         isStreaming = false
         isInitialized = false
-        statusMessage = "Keyboard released to hardware firmware"
+        statusMessage = "Keyboard active in standalone hardware mode"
     }
 
     /// Immediately switches the keyboard hardware to the given onboard slot (1, 2, or 3).
@@ -419,35 +439,48 @@ public final class AperolK70Service: ObservableObject {
         sw[0] = 0x07; sw[1] = 0x17; sw[2] = 0x0C; sw[3] = UInt8(slot - 1)
         sendPacket(sw, to: device)
 
-        // Hand back to hardware mode so the slot's stored profile is displayed immediately
+        // Hand back to hardware mode so the slot's stored profile displays immediately
         sendPacket([0x07, 0x04, 0x01], to: device)
         sendPacket([0x07, 0x05, 0x01], to: device)
         isStreaming = false
         isInitialized = false
         statusMessage = "Switched to Hardware Profile \(slot)"
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
     }
 
-    // MARK: - Hardware Flash (EEPROM) Commit (Manual Only)
+    // MARK: - Hardware Flash (EEPROM) Commit
 
-    /// Commits color to the keyboard's onboard memory for the selected slot (1, 2, or 3)
-    /// while preserving all 3 hardware profiles so the physical Profile switch button continues cycling seamlessly.
+    /// Commits color for the target slot (or active slot), then burns ALL 3 hardware profiles
+    /// cleanly into EEPROM using the official reverse-engineered NXP flash protocol:
+    /// - Re-activates Slot 3 with valid bit 0x01
+    /// - Sets WinLock ON/OFF custom colors for each slot (CMD 0x14 SUB 0x06 & 0x07)
+    /// - Writes lghtcnt.cnt + lght_0X.d (Static effect type 0x07)
+    /// - Commits RGB Matrix (CMD 0x14 SUB 0x03 & 0x04)
+    /// - Commits NXP Profile Changes (CMD 0x17 SUB 0x0E)
     public func flashColorToHardware(slot: Int? = nil) {
+        let targetSlot = slot ?? selectedSlot
+        let nsColor = NSColor(selectedColor).usingColorSpace(.sRGB) ?? NSColor(selectedColor)
+        let r = UInt8(clamping: Int((nsColor.redComponent * brightness * 255.0).rounded()))
+        let g = UInt8(clamping: Int((nsColor.greenComponent * brightness * 255.0).rounded()))
+        let b = UInt8(clamping: Int((nsColor.blueComponent * brightness * 255.0).rounded()))
+
+        slotProfiles[targetSlot] = HardwareSlotColor(r: r, g: g, b: b)
+        saveSlotProfiles()
+
+        flashAllProfilesToHardware(targetSlot: targetSlot)
+    }
+
+    /// Flashes all 3 hardware profiles (Slot 1, Slot 2, Slot 3) to the keyboard flash memory.
+    /// This fully restores Slot 3 so physical Profile button cycling is seamless (1 -> 2 -> 3 -> 1).
+    public func flashAllProfilesToHardware(targetSlot: Int? = nil) {
         guard let device = connectedDevice else {
             statusMessage = "Device Not Found"
             return
         }
-        let targetSlot = slot ?? selectedSlot
+
+        let activeTarget = targetSlot ?? selectedSlot
         isWriting = true
         initializeDeviceIfNeeded()
-
-        let nsColor = NSColor(selectedColor).usingColorSpace(.sRGB) ?? NSColor(selectedColor)
-        let red = UInt8(clamping: Int((nsColor.redComponent * brightness * 255.0).rounded()))
-        let green = UInt8(clamping: Int((nsColor.greenComponent * brightness * 255.0).rounded()))
-        let blue = UInt8(clamping: Int((nsColor.blueComponent * brightness * 255.0).rounded()))
-
-        // Update stored profile color for target slot
-        slotProfiles[targetSlot] = HardwareSlotColor(r: red, g: green, b: blue)
-        saveSlotProfiles()
 
         func paced(_ pkt: [UInt8], delay: TimeInterval = 0.015) {
             sendPacket(pkt, to: device)
@@ -478,35 +511,60 @@ public final class AperolK70Service: ObservableObject {
             p0.replaceSubrange(4..<4+raw.count, with: raw)
         }
         p0[24] = 0x03; p0[25] = 0x00; p0[26] = 0x00; p0[27] = 0x00 // Total modes = 3
-        p0[28] = UInt8(targetSlot - 1); p0[29] = 0x00 // Active slot index (0..2)
+        p0[28] = UInt8(activeTarget - 1); p0[29] = 0x00 // Active slot index (0..2)
         p0[30] = 0x03; p0[31] = 0x00 // Max modes = 3
         paced(p0)
 
-        // 4. Save Mode 1, 2, 3 IDs
+        // 4. Save Official NXP Profile Descriptors (CMD 0x15) for Slot 0, 1, 2 with Active Flag (0x01)
         for s in 1...3 {
-            var idPkt = [UInt8](repeating: 0, count: 64)
-            idPkt[0] = 0x07; idPkt[1] = 0x15; idPkt[2] = 0x01; idPkt[3] = UInt8(s)
+            let slotIndex = UInt8(s - 1) // 0, 1, 2
+            var nxpDesc = [UInt8](repeating: 0, count: 64)
+            nxpDesc[0] = 0x07; nxpDesc[1] = 0x15; nxpDesc[2] = slotIndex; nxpDesc[3] = 0x00
             withUnsafeBytes(of: Self.slotUUIDs[s - 1].uuid) { raw in
-                idPkt.replaceSubrange(4..<4+raw.count, with: raw)
+                nxpDesc.replaceSubrange(4..<4+raw.count, with: raw)
             }
-            paced(idPkt)
+            nxpDesc[20] = 0x0D; nxpDesc[21] = 0x00; nxpDesc[22] = 0x00 // Size
+            nxpDesc[23] = 0x01 // ACTIVE / VALID BIT (Mandatory for hardware button cycle)
+            paced(nxpDesc)
+
+            // Legacy compatibility descriptor
+            var legDesc = [UInt8](repeating: 0, count: 64)
+            legDesc[0] = 0x07; legDesc[1] = 0x15; legDesc[2] = 0x01; legDesc[3] = UInt8(s)
+            withUnsafeBytes(of: Self.slotUUIDs[s - 1].uuid) { raw in
+                legDesc.replaceSubrange(4..<4+raw.count, with: raw)
+            }
+            legDesc[20] = 0x01; legDesc[21] = 0x00; legDesc[22] = 0x00; legDesc[23] = 0x01
+            paced(legDesc)
         }
 
-        // 5. Write 3-Profile Directory Table (0x07, 0x17, 0x04, 0x00) with all 3 slots
+        // 5. Write 3-Profile Directory Table (0x07, 0x17, 0x04, 0x00) with all 3 slots marked valid
         var dirPkt = [UInt8](repeating: 0, count: 64)
         dirPkt[0] = 0x07; dirPkt[1] = 0x17; dirPkt[2] = 0x04; dirPkt[3] = 0x00
         // Slot 1
         withUnsafeBytes(of: Self.slotUUIDs[0].uuid) { raw in dirPkt.replaceSubrange(4..<4+raw.count, with: raw) }
-        dirPkt[20] = 0x19; dirPkt[21] = 0x00; dirPkt[22] = 0x00; dirPkt[23] = 0x00
+        dirPkt[20] = 0x19; dirPkt[21] = 0x00; dirPkt[22] = 0x00; dirPkt[23] = 0x01
         // Slot 2
         withUnsafeBytes(of: Self.slotUUIDs[1].uuid) { raw in dirPkt.replaceSubrange(24..<24+raw.count, with: raw) }
-        dirPkt[40] = 0x09; dirPkt[41] = 0x00; dirPkt[42] = 0x00; dirPkt[43] = 0x00
+        dirPkt[40] = 0x09; dirPkt[41] = 0x00; dirPkt[42] = 0x00; dirPkt[43] = 0x01
         // Slot 3
         withUnsafeBytes(of: Self.slotUUIDs[2].uuid) { raw in dirPkt.replaceSubrange(44..<44+raw.count, with: raw) }
-        dirPkt[60] = 0x01; dirPkt[61] = 0x00; dirPkt[62] = 0x00; dirPkt[63] = 0x00
+        dirPkt[60] = 0x01; dirPkt[61] = 0x00; dirPkt[62] = 0x00; dirPkt[63] = 0x01
         paced(dirPkt)
 
-        // 6. Write Hardware Files "lght_0X.d" for ALL 3 slots (populates hardware playback engine)
+        // 6. Write Lighting Count File "lghtcnt.cnt" (count = 1)
+        var cntOpen = [UInt8](repeating: 0, count: 64)
+        cntOpen[0] = 0x07; cntOpen[1] = 0x17; cntOpen[2] = 0x05; cntOpen[3] = 0x00
+        for (i, b) in "lghtcnt.cnt".utf8.enumerated() { cntOpen[4 + i] = b }
+        paced(cntOpen)
+
+        var cntData = [UInt8](repeating: 0, count: 64)
+        cntData[0] = 0x7F; cntData[1] = 0x01; cntData[2] = 0x04; cntData[3] = 0x00
+        cntData[4] = 0x01; cntData[5] = 0x00; cntData[6] = 0x00; cntData[7] = 0x00
+        paced(cntData)
+        paced([0x07, 0x17, 0x09]) // Flush
+        paced([0x07, 0x17, 0x08]) // Close
+
+        // 7. Write Hardware Files "lght_0X.d" for ALL 3 slots (Static Effect = 0x07)
         for s in 1...3 {
             let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
             var fOpen = [UInt8](repeating: 0, count: 64)
@@ -519,62 +577,93 @@ public final class AperolK70Service: ObservableObject {
 
             var streamPkt = [UInt8](repeating: 0, count: 64)
             streamPkt[0] = 0x7F; streamPkt[1] = 0x01; streamPkt[2] = 0x0D; streamPkt[3] = 0x00
-            streamPkt[4] = 0x00 // static
-            streamPkt[5] = 0x02 // speed
-            streamPkt[6] = 0x03 // mode specific
+            streamPkt[4] = 0x07 // Static effect enum in iCUE
+            streamPkt[5] = 0x00
+            streamPkt[6] = 0x02 // Speed
             streamPkt[7] = 0x00; streamPkt[8] = 0x00
             streamPkt[9] = col.r; streamPkt[10] = col.g; streamPkt[11] = col.b; streamPkt[12] = 0xFF
-            streamPkt[13] = col.r; streamPkt[14] = col.g; streamPkt[15] = col.b; streamPkt[16] = 0xFF
+            streamPkt[13] = 0x00; streamPkt[14] = 0x00; streamPkt[15] = 0x00; streamPkt[16] = 0x00
             paced(streamPkt)
 
-            paced([0x07, 0x17, 0x09])
-            paced([0x07, 0x17, 0x08])
+            paced([0x07, 0x17, 0x09]) // Flush
+            paced([0x07, 0x17, 0x08]) // Close
         }
 
-        // 7. Save Full RGB Matrix for targetSlot (168 bytes across p1, p2, p3 covering all 150 keys and logo)
-        for (channel, val) in [(UInt8(1), red), (UInt8(2), green), (UInt8(3), blue)] {
-            var p1 = [UInt8](repeating: val, count: 64)
-            p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
-            paced(p1)
+        // 8. Save Full 24-bit RGB Matrix for ALL 3 SLOTS
+        for s in 1...3 {
+            let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
+            for (channel, val) in [(UInt8(1), col.r), (UInt8(2), col.g), (UInt8(3), col.b)] {
+                var p1 = [UInt8](repeating: val, count: 64)
+                p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
+                paced(p1)
 
-            var p2 = [UInt8](repeating: val, count: 64)
-            p2[0] = 0x7F; p2[1] = 0x02; p2[2] = 60; p2[3] = 0x00
-            paced(p2)
+                var p2 = [UInt8](repeating: val, count: 64)
+                p2[0] = 0x7F; p2[1] = 0x02; p2[2] = 60; p2[3] = 0x00
+                paced(p2)
 
-            var p3 = [UInt8](repeating: val, count: 64)
-            p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 48; p3[3] = 0x00
-            paced(p3)
+                var p3 = [UInt8](repeating: val, count: 64)
+                p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 48; p3[3] = 0x00
+                paced(p3)
 
-            var commit = [UInt8](repeating: 0, count: 64)
-            commit[0] = 0x07; commit[1] = 0x14; commit[2] = 0x03; commit[3] = 0x01
-            commit[4] = 0x01; commit[5] = UInt8(targetSlot); commit[6] = channel
-            paced(commit)
+                var commit = [UInt8](repeating: 0, count: 64)
+                commit[0] = 0x07; commit[1] = 0x14; commit[2] = 0x03; commit[3] = 0x01
+                commit[4] = 0x01; commit[5] = UInt8(s); commit[6] = channel
+                paced(commit)
+            }
+
+            // End-of-Save Packet for slot s (CMD 0x14 SUB 0x04)
+            var endSave = [UInt8](repeating: 0, count: 64)
+            endSave[0] = 0x07; endSave[1] = 0x14; endSave[2] = 0x04; endSave[3] = 0x01; endSave[4] = UInt8(s)
+            paced(endSave)
         }
 
-        // 8. End-of-Save Packet
-        paced([0x07, 0x14, 0x04, 0x01, 0x01])
+        // 9. Write WinLock ON and OFF Custom Colors for ALL 3 SLOTS (CMD 0x14 SUB 0x07 & 0x06)
+        // This permanently programs the protected WinLock LED to match each profile in EEPROM!
+        for s in 1...3 {
+            let col = slotProfiles[s] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
 
-        // 9. Switch active slot to targetSlot
-        paced([0x07, 0x17, 0x0C, UInt8(targetSlot - 1)])
+            // WinLock ON color
+            var winLockOn = [UInt8](repeating: 0, count: 64)
+            winLockOn[0] = 0x07; winLockOn[1] = 0x14; winLockOn[2] = 0x07; winLockOn[3] = 0x01
+            winLockOn[4] = UInt8(s); winLockOn[5] = col.r; winLockOn[6] = col.g; winLockOn[7] = col.b
+            paced(winLockOn)
 
-        Thread.sleep(forTimeInterval: 0.100)
+            // WinLock OFF color
+            var winLockOff = [UInt8](repeating: 0, count: 64)
+            winLockOff[0] = 0x07; winLockOff[1] = 0x14; winLockOff[2] = 0x06; winLockOff[3] = 0x01
+            winLockOff[4] = UInt8(s); winLockOff[5] = col.r; winLockOff[6] = col.g; winLockOff[7] = col.b
+            paced(winLockOff)
+        }
 
-        // 10. Return to hardware mode so keyboard executes stored profile
+        // 10. Official NXP Commit Profile Changes (CMD 0x17 SUB 0x0E)
+        // Flushes non-volatile buffers and commits changes to hardware flash
+        var nlpCommit = [UInt8](repeating: 0, count: 64)
+        nlpCommit[0] = 0x07; nlpCommit[1] = 0x17; nlpCommit[2] = 0x0E; nlpCommit[3] = 0x00
+        paced(nlpCommit, delay: 0.08)
+
+        // Allow MCU flash write cycle to settle
+        Thread.sleep(forTimeInterval: 0.12)
+
+        // 11. Switch active slot to targetSlot (0-based)
+        paced([0x07, 0x17, 0x0C, UInt8(activeTarget - 1)])
+        Thread.sleep(forTimeInterval: 0.05)
+
+        // 12. Return to standalone hardware mode
         paced([0x07, 0x04, 0x01])
         paced([0x07, 0x05, 0x01])
 
         isStreaming = false
         isInitialized = false
-        markSlotSaved(targetSlot)
+        for s in 1...3 { markSlotSaved(s) }
         isWriting = false
-        statusMessage = "✓ Written to Profile \(targetSlot) Memory (All 3 Profiles Active)"
+        statusMessage = "✓ Written to Hardware Memory (All 3 Profiles & WinLock Active)"
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
     }
 
     /// Commits color to hardware memory and immediately terminates the app (0 MB residual RAM).
     public func flashAndQuit() {
         flashColorToHardware(slot: selectedSlot)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) {
             NSApplication.shared.terminate(nil)
         }
     }
