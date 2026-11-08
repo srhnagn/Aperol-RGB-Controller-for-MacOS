@@ -56,138 +56,12 @@ public struct HardwareSlotColor: Codable, Equatable, Sendable {
     }
 }
 
-/// Thread-safe receiver for 64-byte NXP HID Input reports on collection 0xFFC2:0x0003.
-private final class NxpInputReceiver: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var queue: [[UInt8]] = []
-    public var reportBuffer = [UInt8](repeating: 0, count: 64)
-    private var runLoopThread: Thread?
-    private var receiverRunLoop: CFRunLoop?
-
-    public init() {}
-
-    public func attach(device: IOHIDDevice) {
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        let callback: IOHIDReportCallback = { ctx, result, sender, type, reportID, report, reportLength in
-            guard let ctx, result == kIOReturnSuccess, reportLength > 0 else { return }
-            let receiver = Unmanaged<NxpInputReceiver>.fromOpaque(ctx).takeUnretainedValue()
-            var bytes = [UInt8](repeating: 0, count: 64)
-            let copyLen = min(Int(reportLength), 64)
-            for i in 0..<copyLen {
-                bytes[i] = report[i]
-            }
-            receiver.enqueue(bytes)
-        }
-
-        // Unschedule from main run loop so callbacks fire on our dedicated background run loop
-        // even while hardwareQueue is waiting for command responses.
-        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        IOHIDDeviceRegisterInputReportCallback(device, &reportBuffer, 64, callback, context)
-
-        let readyLock = NSCondition()
-        var started = false
-        let thread = Thread { [weak self] in
-            guard let self else { return }
-            let rl = CFRunLoopGetCurrent()
-            readyLock.lock()
-            self.receiverRunLoop = rl
-            if let rl {
-                IOHIDDeviceScheduleWithRunLoop(device, rl, CFRunLoopMode.defaultMode.rawValue)
-            }
-            started = true
-            readyLock.signal()
-            readyLock.unlock()
-
-            while !Thread.current.isCancelled {
-                CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 1.0, false)
-            }
-        }
-        thread.name = "com.aperol.nxp-hid-input"
-        thread.qualityOfService = QualityOfService.userInteractive
-        readyLock.lock()
-        thread.start()
-        while !started {
-            readyLock.wait()
-        }
-        readyLock.unlock()
-        self.runLoopThread = thread
-    }
-
-    public func detach(device: IOHIDDevice) {
-        if let rl = receiverRunLoop {
-            IOHIDDeviceUnscheduleFromRunLoop(device, rl, CFRunLoopMode.defaultMode.rawValue)
-        }
-        runLoopThread?.cancel()
-        if let rl = receiverRunLoop {
-            CFRunLoopStop(rl)
-        }
-        runLoopThread = nil
-        receiverRunLoop = nil
-    }
-
-    public func clearQueue() {
-        condition.lock()
-        queue.removeAll(keepingCapacity: true)
-        condition.unlock()
-    }
-
-    public func enqueue(_ packet: [UInt8]) {
-        condition.lock()
-        queue.append(packet)
-        if queue.count > 64 {
-            queue.removeFirst(queue.count - 64)
-        }
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    public func waitForMatchingResponse(request: [UInt8], timeoutMs: Int) -> [UInt8]? {
-        // Compute non-zero prefix length of request (matching NxpHidIoBase::getReport)
-        var prefixLen = request.count
-        while prefixLen > 0 && request[prefixLen - 1] == 0 {
-            prefixLen -= 1
-        }
-        prefixLen = max(prefixLen, 2)
-        let startIdx = (request.first == 0xFF) ? 1 : 0
-
-        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
-        condition.lock()
-        defer { condition.unlock() }
-
-        while true {
-            while !queue.isEmpty {
-                let pkt = queue.removeFirst()
-                var matches = true
-                if startIdx < prefixLen {
-                    for i in startIdx..<prefixLen {
-                        if pkt[i] != request[i] {
-                            matches = false
-                            break
-                        }
-                    }
-                }
-                if matches {
-                    return pkt
-                }
-            }
-            let remaining = deadline.timeIntervalSinceNow
-            if remaining <= 0 {
-                return nil
-            }
-            if !condition.wait(until: Date().addingTimeInterval(min(remaining, 0.025))) && Date() >= deadline {
-                return nil
-            }
-        }
-    }
-}
-
 /// Native IOKit USB HID controller for Corsair K70 MK.2 RGB keyboard.
-/// Fully implements the reverse-engineered iCUE `NxpRegularHardwareProfileStorageFeature` &
-/// `NxpFileOperationsFeature` protocol over `0xFFC2:0x0004` (OUT) and `0xFFC2:0x0003` (IN):
-/// - `clearProfile(slot)` + `commitProfileInfo(slot)` + `setCurrentProfile(slot)`
+/// Fully implements the reverse-engineered hardware SPI Flash storage protocol:
+/// - Single-interface synchronous Feature Report control (0xFFC2:0x0004)
 /// - All 7 onboard NXP filesystem files per slot:
-///   `"PROFILE.DAT"`, `"PROFILE.I"`, `"PROFILE.MAP"`, `"lght_00.d"`, `"lght_00.k"`, `"lght_00.r"`, `"lghtcnt.cnt"`
-/// - `commitProfileChanges` (`07 17 0E 00`) with full `getLastOperationStatus` (`0E 17 0D 00`) polling.
+///   "PROFILE.DAT", "PROFILE.I", "PROFILE.MAP", "lght_00.d", "lght_00.k", "lght_00.r", "lghtcnt.cnt"
+/// - SPI NOR Flash commit (0x07 0x17 0x0E 0x00) with 5.0s sector erase settle time.
 @MainActor
 public final class AperolK70Service: ObservableObject {
     public static let shared = AperolK70Service()
@@ -204,12 +78,6 @@ public final class AperolK70Service: ObservableObject {
     ]
 
     public static let maxOnboardSlots: Int = 3
-
-    private static let slotUUIDs: [[UInt8]] = [
-        [0xC0, 0x85, 0xA1, 0x01, 0x4A, 0x70, 0x4B, 0x70, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
-        [0xC0, 0x85, 0xA1, 0x02, 0x4A, 0x70, 0x4B, 0x70, 0x80, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02],
-        [0xC0, 0x85, 0xA1, 0x03, 0x4A, 0x70, 0x4B, 0x70, 0x80, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]
-    ]
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
@@ -260,9 +128,7 @@ public final class AperolK70Service: ObservableObject {
     }
 
     private var hidManager: IOHIDManager?
-    private var connectedDevice: IOHIDDevice? // 0xFFC2:0x0004 (OUT)
-    private var inputDevice: IOHIDDevice?     // 0xFFC2:0x0003 (IN)
-    private let inputReceiver = NxpInputReceiver()
+    private var connectedDevice: IOHIDDevice? // 0xFFC2:0x0004
     private let hardwareQueue = DispatchQueue(label: "com.aperol.k70.hardware-flash", qos: .userInitiated)
     private var isInitialized: Bool = false
     private var lastStreamTime: Date = Date.distantPast
@@ -419,12 +285,7 @@ public final class AperolK70Service: ObservableObject {
 
     public func sendWinLockDisabledReport(_ disabled: Bool) {
         guard let device = connectedDevice else { return }
-        var pkt = [UInt8](repeating: 0, count: 64)
-        pkt[0] = 0x07
-        pkt[1] = 0x48
-        pkt[2] = disabled ? 0x00 : 0x80
-        pkt[3] = 0x00
-        sendPacket(pkt, to: device)
+        _ = Self.sendReport([0x07, 0x48, disabled ? 0x00 : 0x80, 0x00], to: device)
         statusMessage = disabled ? "WinLock Key Action Disabled" : "WinLock Key Action Enabled"
     }
 
@@ -463,7 +324,7 @@ public final class AperolK70Service: ObservableObject {
         return Color(red: r, green: g, blue: b)
     }
 
-    // MARK: - HID Management (Dual Collection: 0xFFC2:0x0004 OUT + 0xFFC2:0x0003 IN)
+    // MARK: - HID Management (0xFFC2:0x0004 Feature Report Interface)
 
     private func isOutLightingInterface(_ device: IOHIDDevice) -> Bool {
         let usagePage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int ?? 0
@@ -474,13 +335,6 @@ public final class AperolK70Service: ObservableObject {
             return usage == 0x0004 || (usage == 0x0002 && (maxOut >= 64 || maxFeat >= 64))
         }
         return false
-    }
-
-    private func isInResponseInterface(_ device: IOHIDDevice) -> Bool {
-        let usagePage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int ?? 0
-        let usage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? Int ?? 0
-        let maxIn = IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int ?? 0
-        return usagePage == 0xFFC2 && usage == 0x0003 && maxIn >= 64
     }
 
     private func setupHIDManager() {
@@ -529,14 +383,6 @@ public final class AperolK70Service: ObservableObject {
             return
         }
 
-        if isInResponseInterface(device) {
-            if self.inputDevice != device {
-                self.inputDevice = device
-                self.inputReceiver.attach(device: device)
-            }
-            return
-        }
-
         guard isOutLightingInterface(device) else { return }
 
         if let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String {
@@ -549,10 +395,6 @@ public final class AperolK70Service: ObservableObject {
     }
 
     private func deviceDetached(_ device: IOHIDDevice) {
-        if inputDevice == device {
-            inputReceiver.detach(device: device)
-            inputDevice = nil
-        }
         if connectedDevice == device {
             connectedDevice = nil
             isConnected = false
@@ -561,164 +403,109 @@ public final class AperolK70Service: ObservableObject {
         }
     }
 
-    // MARK: - Low-Level NXP HID Report Transport (Matches NxpKeyboardHidIo & NxpHidIoBase)
+    // MARK: - Proven Synchronous HID Transport (from K70HardwareProfileBurner)
 
     @discardableResult
-    nonisolated private static func sendOutReport(
+    nonisolated private static func sendReport(
         _ bytes: [UInt8],
-        to device: IOHIDDevice,
-        delayMs: UInt32 = 3
-    ) -> IOReturn {
-        var buf = [UInt8](repeating: 0, count: 64)
-        for i in 0..<min(bytes.count, 64) {
-            buf[i] = bytes[i]
+        to device: IOHIDDevice
+    ) -> Bool {
+        var pkt = [UInt8](repeating: 0, count: 64)
+        for (i, b) in bytes.enumerated() where i < 64 { pkt[i] = b }
+        let kr = IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, 0, pkt, 64)
+        if kr == kIOReturnSuccess {
+            return true
         }
-        var kr: IOReturn = kIOReturnError
-        for attempt in 0..<3 {
-            // In NxpKeyboardHidIo (protocolVersion 4/5), reportId is 0 and ReportType is Output (1)
-            kr = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, 0, buf, 64)
-            if kr == kIOReturnSuccess {
-                break
-            }
-            // Fallback to Feature report only on legacy protocolVersion 1 devices
-            kr = IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, 0, buf, 64)
-            if kr == kIOReturnSuccess {
-                break
-            }
-            if attempt < 2 {
-                usleep(10_000)
-            }
-        }
-        if delayMs > 0 {
-            usleep(delayMs * 1000)
-        }
-        return kr
+        let krOut = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, 0, pkt, 64)
+        return krOut == kIOReturnSuccess
     }
 
-    nonisolated private static func sendCommand(
-        _ cmd: [UInt8],
-        to outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool,
-        delayMs: UInt32 = 2
-    ) -> [UInt8]? {
-        if hasInputDevice {
-            for _ in 0..<3 {
-                receiver.clearQueue()
-                let kr = sendOutReport(cmd, to: outDevice, delayMs: 0)
-                guard kr == kIOReturnSuccess else {
-                    usleep(10_000)
-                    continue
-                }
-                if let resp = receiver.waitForMatchingResponse(request: cmd, timeoutMs: 250) {
-                    if delayMs > 0 {
-                        usleep(delayMs * 1000)
-                    }
-                    return resp
-                }
-            }
-            return nil
-        } else {
-            // Fallback for legacy single-interface Feature-report keyboards
-            guard sendOutReport(cmd, to: outDevice, delayMs: 3) == kIOReturnSuccess else { return nil }
-            var resp = [UInt8](repeating: 0, count: 64)
-            var len: CFIndex = 64
-            let kr = IOHIDDeviceGetReport(outDevice, kIOHIDReportTypeFeature, 0, &resp, &len)
-            return kr == kIOReturnSuccess ? resp : nil
+    nonisolated private static func getOpStatus(
+        dev: IOHIDDevice
+    ) -> (st: UInt8, err: UInt8) {
+        _ = sendReport([0x0E, 0x17, 0x0D, 0x00], to: dev)
+        usleep(15000) // 15ms settle time for MCU USB FIFO
+        var resp = [UInt8](repeating: 0, count: 64)
+        var len = 64
+        let kr = IOHIDDeviceGetReport(dev, kIOHIDReportTypeFeature, 0, &resp, &len)
+        if kr == kIOReturnSuccess {
+            return (resp[4], resp[5])
         }
-    }
-
-    nonisolated private static func getLastOperationStatus(
-        outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool
-    ) -> UInt8 {
-        guard let resp = sendCommand(
-            [0x0E, 0x17, 0x0D, 0x00],
-            to: outDevice,
-            receiver: receiver,
-            hasInputDevice: hasInputDevice,
-            delayMs: 2
-        ) else {
-            return 0xFF
-        }
-        return resp[4]
+        return (0xFE, 0xFE)
     }
 
     nonisolated private static func waitOp(
-        outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool,
-        timeoutMs: Int = 15000,
-        initialDelayMs: UInt32 = 8
-    ) -> UInt8 {
-        if initialDelayMs > 0 {
-            usleep(initialDelayMs * 1000)
-        }
+        dev: IOHIDDevice,
+        timeoutMs: Int = 2500,
+        desc: String = ""
+    ) -> (st: UInt8, err: UInt8) {
+        usleep(25000) // 25ms initial settle time
         let start = Date()
+        var errorCount = 0
         while Date().timeIntervalSince(start) * 1000.0 < Double(timeoutMs) {
-            let st = getLastOperationStatus(
-                outDevice: outDevice,
-                receiver: receiver,
-                hasInputDevice: hasInputDevice
-            )
-            if st == 0x01 || st == 0xFF {
-                usleep(10_000)
-                continue
+            let (st, err) = getOpStatus(dev: dev)
+            // 0x01 = InProgress, 0xFE = USB bus error / settling
+            if st != 0x01 && st != 0xFE {
+                return (st, err)
             }
-            return st
+            if st == 0xFE {
+                errorCount += 1
+                if errorCount >= 5 {
+                    return (0xFE, 0xFE)
+                }
+            }
+            usleep(25000) // 25ms interval between polling cycles
         }
-        return 0xFE
+        return (0xFE, 0xFE)
     }
 
-    nonisolated private static func closeFile(
-        outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool
-    ) {
-        sendOutReport([0x07, 0x17, 0x08, 0x00], to: outDevice, delayMs: 5)
-        _ = waitOp(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice, timeoutMs: 3000, initialDelayMs: 8)
+    nonisolated private static func closeFile(dev: IOHIDDevice) {
+        _ = sendReport([0x07, 0x17, 0x08, 0x00], to: dev)
+        _ = waitOp(dev: dev, timeoutMs: 1500, desc: "closeFile")
+        usleep(15000)
     }
 
     @discardableResult
     nonisolated private static func openFileForWrite(
         name: String,
-        outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool
+        dev: IOHIDDevice,
+        timeoutMs: Int = 4000
     ) -> Bool {
-        var pkt: [UInt8] = [0x07, 0x17, 0x05, 0x00]
-        pkt.append(contentsOf: name.utf8)
-        sendOutReport(pkt, to: outDevice, delayMs: 5)
-        var st = waitOp(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice, timeoutMs: 5000, initialDelayMs: 8)
-        if st == 0x03 {
-            // FileAlreadyOpened -> close and retry
-            closeFile(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice)
-            sendOutReport(pkt, to: outDevice, delayMs: 5)
-            st = waitOp(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice, timeoutMs: 5000, initialDelayMs: 8)
+        var openPkt = [UInt8](repeating: 0, count: 64)
+        openPkt[0] = 0x07; openPkt[1] = 0x17; openPkt[2] = 0x05; openPkt[3] = 0x00
+        let nameBytes = Array(name.utf8)
+        for i in 0..<nameBytes.count { openPkt[4 + i] = nameBytes[i] }
+
+        let start = Date()
+        while Date().timeIntervalSince(start) * 1000.0 < Double(timeoutMs) {
+            let ok = sendReport(openPkt, to: dev)
+            if !ok { return false }
+            let res = waitOp(dev: dev, timeoutMs: 1500, desc: "openWrite \(name)")
+            if res.st == 0x00 || res.st == 0x04 {
+                return true
+            }
+            if res.st == 0x03 { // FileAlreadyOpened -> close and retry
+                closeFile(dev: dev)
+            } else if res.st == 0x0C || res.st == 0x0D { // Flash busy
+                usleep(400000) // Wait 400ms for flash erase/write cycle
+            } else if res.st == 0xFE {
+                return false
+            } else {
+                usleep(100000)
+            }
         }
-        // In NxpFileOperationsFeature::Impl::getFile<5>, both 0x00 and 0x04 are valid success codes
-        return st == 0x00 || st == 0x04
+        return false
     }
 
     @discardableResult
-    nonisolated private static func writeNxpFile(
+    nonisolated private static func writeFile(
         name: String,
         data: [UInt8],
-        outDevice: IOHIDDevice,
-        receiver: NxpInputReceiver,
-        hasInputDevice: Bool
+        dev: IOHIDDevice
     ) -> Bool {
-        guard openFileForWrite(
-            name: name,
-            outDevice: outDevice,
-            receiver: receiver,
-            hasInputDevice: hasInputDevice
-        ) else {
+        guard openFileForWrite(name: name, dev: dev) else {
             return false
         }
-
-        // Write in batches of maxBufferSize = 300 bytes (up to 5 packets x 60 bytes per batch)
         var offset = 0
         while offset < data.count {
             let batchLen = min(300, data.count - offset)
@@ -728,24 +515,32 @@ public final class AperolK70Service: ObservableObject {
                 let s = (p - 1) * 60
                 let e = min(s + 60, batchLen)
                 let chunk = Array(batch[s..<e])
-                var pkt: [UInt8] = [0x7F, UInt8(p), UInt8(chunk.count), 0x00]
-                pkt.append(contentsOf: chunk)
-                sendOutReport(pkt, to: outDevice, delayMs: 3)
+                var pkt = [UInt8](repeating: 0, count: 64)
+                pkt[0] = 0x7F; pkt[1] = UInt8(p); pkt[2] = UInt8(chunk.count); pkt[3] = 0x00
+                for i in 0..<chunk.count { pkt[4 + i] = chunk[i] }
+                let ok = sendReport(pkt, to: dev)
+                if !ok {
+                    closeFile(dev: dev)
+                    return false
+                }
+                usleep(12000) // 12ms quiet delay between chunk packets
             }
-            // commit<9>: flush buffer batch to currently open file
-            sendOutReport([0x07, 0x17, 0x09, 0x00], to: outDevice, delayMs: 5)
-            _ = waitOp(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice, timeoutMs: 5000, initialDelayMs: 8)
+            // Flush batch to MCU buffer (internal SRAM commit, 20ms settle time)
+            let okFlush = sendReport([0x07, 0x17, 0x09, 0x00], to: dev)
+            if !okFlush {
+                closeFile(dev: dev)
+                return false
+            }
+            usleep(20000)
             offset += batchLen
         }
-
-        // commit<8>: close file
-        closeFile(outDevice: outDevice, receiver: receiver, hasInputDevice: hasInputDevice)
+        closeFile(dev: dev)
+        if data.count >= 500 {
+            usleep(800000) // 800ms settle for SPI Flash
+        } else {
+            usleep(50000)  // 50ms settle for small files
+        }
         return true
-    }
-
-    @discardableResult
-    private func sendPacket(_ bytes: [UInt8], to device: IOHIDDevice) -> IOReturn {
-        Self.sendOutReport(bytes, to: device, delayMs: 0)
     }
 
     // MARK: - Device Protocol Handshake (Volatile Live Preview)
@@ -755,17 +550,17 @@ public final class AperolK70Service: ObservableObject {
         isInitialized = true
 
         // 1. SpecialFunctionControl: Software control mode
-        sendPacket([0x07, 0x04, 0x02, 0x00], to: device)
+        Self.sendReport([0x07, 0x04, 0x02, 0x00], to: device)
 
         // 2. LightingControl: mode software 0x02, brightness 0x03 (MAX)
         var lc = [UInt8](repeating: 0, count: 64)
         lc[0] = 0x07; lc[1] = 0x05; lc[2] = 0x02; lc[3] = 0x00; lc[4] = 0x03
-        sendPacket(lc, to: device)
+        Self.sendReport(lc, to: device)
 
         // 3. SetupLightingControl
         var s1 = [UInt8](repeating: 0, count: 64)
         s1[0] = 0x07; s1[1] = 0x05; s1[2] = 0x08; s1[3] = 0x00; s1[4] = 0x01
-        sendPacket(s1, to: device)
+        Self.sendReport(s1, to: device)
 
         // 4. Matrix mapping: sequence covering all 150 key/zone positions
         let skipped: Set<UInt8> = [0x3F, 0x41, 0x42, 0x50, 0x53, 0x55, 0x6F, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81]
@@ -780,10 +575,10 @@ public final class AperolK70Service: ObservableObject {
                 pkt[3 + j] = identifier
                 identifier &+= 1
             }
-            sendPacket(pkt, to: device)
+            Self.sendReport(pkt, to: device)
         }
 
-        Thread.sleep(forTimeInterval: 0.015)
+        usleep(15000)
     }
 
     // MARK: - Volatile Real-Time Streaming (Zero EEPROM Wear)
@@ -826,21 +621,21 @@ public final class AperolK70Service: ObservableObject {
             var p1 = [UInt8](repeating: 0, count: 64)
             p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
             for k in 0..<60 { p1[4 + k] = channelBuf[k] }
-            sendPacket(p1, to: device)
+            Self.sendReport(p1, to: device)
 
             var p2 = [UInt8](repeating: 0, count: 64)
             p2[0] = 0x7F; p2[1] = 0x02; p2[2] = 60; p2[3] = 0x00
             for k in 0..<60 { p2[4 + k] = channelBuf[60 + k] }
-            sendPacket(p2, to: device)
+            Self.sendReport(p2, to: device)
 
             var p3 = [UInt8](repeating: 0, count: 64)
             p3[0] = 0x7F; p3[1] = 0x03; p3[2] = 48; p3[3] = 0x00
             for k in 0..<48 { p3[4 + k] = channelBuf[120 + k] }
-            sendPacket(p3, to: device)
+            Self.sendReport(p3, to: device)
 
             var sub = [UInt8](repeating: 0, count: 64)
             sub[0] = 0x07; sub[1] = 0x28; sub[2] = channel; sub[3] = 0x03; sub[4] = finishVal
-            sendPacket(sub, to: device)
+            Self.sendReport(sub, to: device)
         }
 
         streamChannel(mainVal: r, bVal: bR, wVal: wR, pVal: pR, channel: 1, finishVal: 1)
@@ -854,8 +649,8 @@ public final class AperolK70Service: ObservableObject {
     public func releaseToHardwareMode() {
         zoneWorkItem?.cancel()
         guard let device = connectedDevice, isStreaming else { return }
-        sendPacket([0x07, 0x04, 0x01, 0x00], to: device)
-        sendPacket([0x07, 0x05, 0x01, 0x00, 0x03], to: device)
+        Self.sendReport([0x07, 0x04, 0x01, 0x00], to: device)
+        Self.sendReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device)
         isStreaming = false
         isInitialized = false
         statusMessage = "Keyboard active in standalone hardware mode"
@@ -867,21 +662,23 @@ public final class AperolK70Service: ObservableObject {
         if let slotCol = slotProfiles[slot] {
             selectedColor = slotCol.color
         }
-        let receiver = self.inputReceiver
-        let hasIn = (self.inputDevice != nil)
         let slotIdx = UInt8(max(0, min(2, slot - 1)))
 
-        hardwareQueue.async {
-            Self.sendOutReport([0x07, 0x04, 0x02, 0x00], to: device, delayMs: 5)
-            Self.sendOutReport([0x07, 0x17, 0x0C, slotIdx], to: device, delayMs: 5)
-            _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 3000, initialDelayMs: 8)
-            Self.sendOutReport([0x07, 0x04, 0x01, 0x00], to: device, delayMs: 5)
-            Self.sendOutReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device, delayMs: 5)
+        hardwareQueue.async { [weak self] in
+            guard let self else { return }
+            Self.sendReport([0x07, 0x04, 0x02, 0x00], to: device)
+            Self.sendReport([0x07, 0x17, 0x0C, slotIdx], to: device)
+            usleep(150000)
+            Self.sendReport([0x07, 0x04, 0x01, 0x00], to: device)
+            Self.sendReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isStreaming = false
+                self.isInitialized = false
+                self.statusMessage = "Switched to Hardware Profile \(slot)"
+                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+            }
         }
-        isStreaming = false
-        isInitialized = false
-        statusMessage = "Switched to Hardware Profile \(slot)"
-        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
     }
 
     // MARK: - Hardware Flash (Complete 7-File NXP Hardware Profile Package per Slot)
@@ -900,7 +697,7 @@ public final class AperolK70Service: ObservableObject {
     }
 
     /// Writes all 3 hardware profiles (Slot 1, Slot 2, Slot 3) to onboard SPI NOR flash
-    /// using the exact iCUE `NxpRegularHardwareProfileStorageFeature::writeProfilePackage` sequence.
+    /// using the proven reliable K70HardwareProfileBurner sequence.
     public func flashAllProfilesToHardware(targetSlot: Int? = nil, completion: (@MainActor () -> Void)? = nil) {
         guard let device = connectedDevice else {
             statusMessage = "Device Not Found"
@@ -910,7 +707,7 @@ public final class AperolK70Service: ObservableObject {
 
         let activeTarget = targetSlot ?? selectedSlot
         isWriting = true
-        statusMessage = "Writing all 3 profiles to onboard flash memory..."
+        statusMessage = "Flashing hardware profiles to onboard flash memory..."
 
         let profilesSnapshot = self.slotProfiles
         let winLockDisabledSnapshot = self.isWinLockDisabled
@@ -943,184 +740,101 @@ public final class AperolK70Service: ObservableObject {
             UInt8(clamping: Int((nsBright.blueComponent * 255.0).rounded()))
         )
 
-        let receiver = self.inputReceiver
-        let hasIn = (self.inputDevice != nil)
-        let guids = Self.slotUUIDs
-
         hardwareQueue.async { [weak self] in
-            // 1. Enter Software Control Mode before NXP file operations
-            Self.sendOutReport([0x07, 0x04, 0x02, 0x00], to: device, delayMs: 8)
-            Self.sendOutReport([0x07, 0x05, 0x02, 0x00, 0x03], to: device, delayMs: 8)
+            // 1. Enter Software Mode
+            Self.sendReport([0x07, 0x04, 0x02, 0x00], to: device)
+            Self.sendReport([0x07, 0x05, 0x02, 0x00, 0x03], to: device)
+            usleep(50000)
 
-            // 2. Read existing 3-byte hwId cookies for slots 0..2 via 0E 15 01 <slot>
-            var cookies: [[UInt8]] = [
-                [0x01, 0x00, 0x00],
-                [0x02, 0x00, 0x00],
-                [0x03, 0x00, 0x00]
-            ]
-            for s in 0...2 {
-                if let resp = Self.sendCommand(
-                    [0x0E, 0x15, 0x01, UInt8(s)],
-                    to: device,
-                    receiver: receiver,
-                    hasInputDevice: hasIn,
-                    delayMs: 4
-                ) {
-                    let c = Array(resp[20...22])
-                    if c != [0, 0, 0] {
-                        cookies[s] = c
-                    }
-                }
-            }
-            // Ensure all 3 slot cookies are distinct and non-zero
-            if cookies[1] == cookies[0] {
-                cookies[1] = [cookies[0][0] &+ 1, cookies[0][1], cookies[0][2]]
-                if cookies[1] == [0, 0, 0] { cookies[1] = [0x02, 0x00, 0x00] }
-            }
-            if cookies[2] == cookies[0] || cookies[2] == cookies[1] {
-                cookies[2] = [cookies[1][0] &+ 1, cookies[1][1], cookies[1][2]]
-                if cookies[2] == [0, 0, 0] || cookies[2] == cookies[0] {
-                    cookies[2] = [0x03, 0x00, 0x00]
-                }
-            }
-
-            // 3. Program all 3 hardware profile slots (0, 1, 2)
             for s in 0...2 {
                 let slotNum = s + 1
                 let col = profilesSnapshot[slotNum] ?? HardwareSlotColor(r: 255, g: 0, b: 0)
-                let guid = guids[s]
-                let hwId = cookies[s]
 
                 Task { @MainActor [weak self] in
-                    self?.statusMessage = "Flashing Hardware Profile \(slotNum) of 3..."
+                    self?.statusMessage = "Programming Slot \(slotNum) of 3 (R:\(col.r), G:\(col.g), B:\(col.b))..."
                 }
 
-                // Step A: clearProfile(s) (NxpHardwareProfileStorageFeature::Impl::clearProfile)
-                // When QUuid::isNull(), bytes 4..19 are 0 and byte 23 is 0x00.
-                var clearPkt = [UInt8](repeating: 0, count: 64)
-                clearPkt[0] = 0x07
-                clearPkt[1] = 0x15
-                clearPkt[2] = UInt8(s)
-                clearPkt[3] = 0x00
-                clearPkt[20] = hwId[0]
-                clearPkt[21] = hwId[1]
-                clearPkt[22] = hwId[2]
-                clearPkt[23] = 0x00
-                Self.sendOutReport(clearPkt, to: device, delayMs: 10)
-                let clearSt = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                if clearSt == 0x0C {
-                    // NeedCommitChanges -> commitProfileChanges (07 17 0E 00) and retry clear
-                    Self.sendOutReport([0x07, 0x17, 0x0E, 0x00], to: device, delayMs: 10)
-                    _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                    Self.sendOutReport(clearPkt, to: device, delayMs: 10)
-                    _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                }
-                // commitProfileChanges after clearProfile
-                Self.sendOutReport([0x07, 0x17, 0x0E, 0x00], to: device, delayMs: 10)
-                _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
+                // Step A: Register Profile Info (0x15)
+                let guid: [UInt8] = [
+                    0xC0, 0x85, 0xA1, 0x01,
+                    0x4A, 0x70, 0x4B, 0x70,
+                    0x80, UInt8(slotNum), 0x00, 0x00,
+                    0x00, 0x00, 0x00, UInt8(slotNum)
+                ]
+                let hwId: [UInt8] = [UInt8(slotNum), 0x00, 0x00]
 
-                // Step B: commitProfileInfo(s, info) (byte 23 = 0x01 for non-null QUuid)
                 var infoPkt = [UInt8](repeating: 0, count: 64)
-                infoPkt[0] = 0x07
-                infoPkt[1] = 0x15
-                infoPkt[2] = UInt8(s)
-                infoPkt[3] = 0x00
+                infoPkt[0] = 0x07; infoPkt[1] = 0x15; infoPkt[2] = UInt8(s); infoPkt[3] = 0x00
                 for i in 0..<16 { infoPkt[4 + i] = guid[i] }
-                infoPkt[20] = hwId[0]
-                infoPkt[21] = hwId[1]
-                infoPkt[22] = hwId[2]
-                infoPkt[23] = 0x01
-                Self.sendOutReport(infoPkt, to: device, delayMs: 10)
-                let infoSt = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                if infoSt == 0x0C {
-                    Self.sendOutReport([0x07, 0x17, 0x0E, 0x00], to: device, delayMs: 10)
-                    _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                    Self.sendOutReport(infoPkt, to: device, delayMs: 10)
-                    _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
-                }
+                infoPkt[20] = hwId[0]; infoPkt[21] = hwId[1]; infoPkt[22] = hwId[2]; infoPkt[23] = 0x01
 
-                // Step C: setCurrentProfile(s) (07 17 0C <slot>)
-                Self.sendOutReport([0x07, 0x17, 0x0C, UInt8(s)], to: device, delayMs: 8)
-                _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 5000, initialDelayMs: 10)
-
-                // Step D: Build and write all 7 files in QMap lexicographical order
-                // 1. "PROFILE.DAT" (4 bytes): [0x50, isWinLockDisabled ? 0x00 : 0x02, 0x00, 0x00]
-                let profileDat: [UInt8] = [0x50, winLockDisabledSnapshot ? 0x00 : 0x02, 0x00, 0x00]
-
-                // 2. "PROFILE.I" (268 bytes)
-                var profileI = [UInt8](repeating: 0, count: 268)
-                profileI[0] = 0x49
-                profileI[1] = 0x00
-                for i in 0..<16 { profileI[2 + i] = guid[i] }
-                profileI[18] = hwId[0]
-                profileI[19] = hwId[1]
-                profileI[20] = hwId[2]
-                profileI[21] = 0x00
-                if let nameData = "Profile \(slotNum)".data(using: .utf16LittleEndian) {
-                    let count = min(nameData.count, 230)
-                    nameData.copyBytes(to: &profileI[22], count: count)
-                }
-                profileI[252] = 0x00
-                profileI[253] = profRGB.0
-                profileI[254] = profRGB.1
-                profileI[255] = profRGB.2
-                profileI[256] = brightRGB.0
-                profileI[257] = brightRGB.1
-                profileI[258] = brightRGB.2
-                profileI[259] = winLockLockedRGB.0
-                profileI[260] = winLockLockedRGB.1
-                profileI[261] = winLockLockedRGB.2
-                profileI[262] = winLockUnlockedRGB.0
-                profileI[263] = winLockUnlockedRGB.1
-                profileI[264] = winLockUnlockedRGB.2
-                profileI[265] = 0xFF // SidelightingControl enabled
-
-                // 3. "PROFILE.MAP" (4 bytes)
-                let profileMap: [UInt8] = [0x41, 0x00, 0x00, 0x00]
-
-                // 4. "lght_00.d" (37 bytes: Static lighting header)
-                var lghtD = [UInt8](repeating: 0, count: 37)
-                lghtD[0] = 0x07  // Static effect type
-                lghtD[18] = 0x01 // Effect enabled flag
-
-                // 5. "lght_00.k" (160 bytes: 156 key indices 0..155)
-                var lghtK = [UInt8](repeating: 0, count: 160)
-                lghtK[0] = 0x9C  // 156 keys (LE uint32)
-                for k in 0..<156 {
-                    lghtK[4 + k] = UInt8(k)
-                }
-
-                // 6. "lght_00.r" (1024 bytes: 156 x [R, G, B, 0xFF] entries, zero-padded to 1024)
-                var lghtR = [UInt8](repeating: 0, count: 1024)
-                for k in 0..<156 {
-                    let base = k * 4
-                    if k == 16 {
-                        lghtR[base] = brightRGB.0
-                        lghtR[base + 1] = brightRGB.1
-                        lghtR[base + 2] = brightRGB.2
-                        lghtR[base + 3] = 0xFF
-                    } else if k == 114 {
-                        lghtR[base] = winLockUnlockedRGB.0
-                        lghtR[base + 1] = winLockUnlockedRGB.1
-                        lghtR[base + 2] = winLockUnlockedRGB.2
-                        lghtR[base + 3] = 0xFF
-                    } else if k == 125 {
-                        lghtR[base] = profRGB.0
-                        lghtR[base + 1] = profRGB.1
-                        lghtR[base + 2] = profRGB.2
-                        lghtR[base + 3] = 0xFF
+                for _ in 1...5 {
+                    _ = Self.sendReport(infoPkt, to: device)
+                    let infoSt = Self.waitOp(dev: device, timeoutMs: 15000, desc: "commitProfileInfo \(slotNum)")
+                    if infoSt.st == 0x00 { break }
+                    if infoSt.st == 0x0C || infoSt.st == 0x0D {
+                        sleep(2)
                     } else {
-                        lghtR[base] = col.r
-                        lghtR[base + 1] = col.g
-                        lghtR[base + 2] = col.b
-                        lghtR[base + 3] = 0xFF
+                        sleep(1)
                     }
                 }
 
-                // 7. "lghtcnt.cnt" (4 bytes: 1 lighting effect)
+                // Step B: Set Current Profile Slot Directory (0x0C)
+                _ = Self.sendReport([0x07, 0x17, 0x0C, UInt8(s)], to: device)
+                usleep(150000)
+
+                // Step C: Build 7 Profile Files
+                // 1. PROFILE.DAT
+                let profileDat: [UInt8] = [0x50, winLockDisabledSnapshot ? 0x00 : 0x02, 0x00, 0x00]
+
+                // 2. PROFILE.I
+                var profileI = [UInt8](repeating: 0, count: 268)
+                profileI[0] = 0x49; profileI[1] = 0x00
+                for i in 0..<16 { profileI[2 + i] = guid[i] }
+                profileI[18] = hwId[0]; profileI[19] = hwId[1]; profileI[20] = hwId[2]; profileI[21] = 0x00
+                if let nameData = "Profile \(slotNum)".data(using: .utf16LittleEndian) {
+                    nameData.copyBytes(to: &profileI[22], count: min(nameData.count, 230))
+                }
+                profileI[252] = 0x00
+
+                let (btnR, btnG, btnB) = (slotNum == activeTarget) ? profRGB : (col.r, col.g, col.b)
+                let (brightR, brightG, brightB) = (slotNum == activeTarget) ? brightRGB : (col.r, col.g, col.b)
+                let (lockR, lockG, lockB) = (slotNum == activeTarget) ? winLockLockedRGB : (col.r, col.g, col.b)
+                let (unlockR, unlockG, unlockB) = (slotNum == activeTarget) ? winLockUnlockedRGB : (col.r, col.g, col.b)
+
+                profileI[253] = btnR; profileI[254] = btnG; profileI[255] = btnB
+                profileI[256] = brightR; profileI[257] = brightG; profileI[258] = brightB
+                profileI[259] = lockR; profileI[260] = lockG; profileI[261] = lockB
+                profileI[262] = unlockR; profileI[263] = unlockG; profileI[264] = unlockB
+                profileI[265] = 0xFF
+
+                // 3. PROFILE.MAP
+                let profileMap: [UInt8] = [0x41, 0x00, 0x00, 0x00]
+
+                // 4. lght_00.d
+                var lghtD = [UInt8](repeating: 0, count: 37)
+                lghtD[0] = 0x07
+                lghtD[18] = 0x01
+
+                // 5. lght_00.k
+                var lghtK = [UInt8](repeating: 0, count: 160)
+                lghtK[0] = 0x9C
+                for k in 0..<156 { lghtK[4 + k] = UInt8(k) }
+
+                // 6. lght_00.r (1024 bytes: 156 keys x 4 bytes in 1024-byte allocated buffer)
+                var lghtR = [UInt8](repeating: 0, count: 1024)
+                for k in 0..<156 {
+                    let base = k * 4
+                    lghtR[base]     = col.r
+                    lghtR[base + 1] = col.g
+                    lghtR[base + 2] = col.b
+                    lghtR[base + 3] = 0xFF
+                }
+
+                // 7. lghtcnt.cnt
                 let lghtCnt: [UInt8] = [0x01, 0x00, 0x00, 0x00]
 
-                let filesToWrite: [(String, [UInt8])] = [
+                let files: [(String, [UInt8])] = [
                     ("PROFILE.DAT", profileDat),
                     ("PROFILE.I", profileI),
                     ("PROFILE.MAP", profileMap),
@@ -1130,33 +844,45 @@ public final class AperolK70Service: ObservableObject {
                     ("lghtcnt.cnt", lghtCnt)
                 ]
 
-                for (fileName, fileBytes) in filesToWrite {
-                    Self.writeNxpFile(
-                        name: fileName,
-                        data: fileBytes,
-                        outDevice: device,
-                        receiver: receiver,
-                        hasInputDevice: hasIn
-                    )
+                var writeSuccess = true
+                for (fname, bytes) in files {
+                    if !Self.writeFile(name: fname, data: bytes, dev: device) {
+                        writeSuccess = false
+                        break
+                    }
                 }
 
-                // Step E: commitProfileChanges() (07 17 0E 00) for slot s
-                Self.sendOutReport([0x07, 0x17, 0x0E, 0x00], to: device, delayMs: 10)
-                _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
+                guard writeSuccess else {
+                    Task { @MainActor [weak self] in
+                        self?.isWriting = false
+                        self?.statusMessage = "❌ Flash Error: Slot \(slotNum) write failed"
+                    }
+                    return
+                }
+
+                // Step D: Commit Profile Changes to physical SPI NOR Flash (0x0E)
+                _ = Self.sendReport([0x07, 0x17, 0x0E, 0x00], to: device)
+                Task { @MainActor [weak self] in
+                    self?.statusMessage = "Slot \(slotNum) saved! SPI Flash settling (5s)..."
+                }
+                sleep(5)
             }
 
-            // 4. Select active target slot (0-based) and commit
+            // Step 4: Set active slot
             let targetSlotIdx = UInt8(max(0, min(2, activeTarget - 1)))
-            Self.sendOutReport([0x07, 0x17, 0x0C, targetSlotIdx], to: device, delayMs: 8)
-            _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 5000, initialDelayMs: 10)
+            _ = Self.sendReport([0x07, 0x17, 0x0C, targetSlotIdx], to: device)
+            usleep(100000)
+            _ = Self.sendReport([0x07, 0x17, 0x0E, 0x00], to: device)
+            sleep(2)
 
-            Self.sendOutReport([0x07, 0x17, 0x0E, 0x00], to: device, delayMs: 10)
-            _ = Self.waitOp(outDevice: device, receiver: receiver, hasInputDevice: hasIn, timeoutMs: 15000, initialDelayMs: 15)
+            // Step 5: Apply WinLock physical key action
+            _ = Self.sendReport([0x07, 0x48, winLockDisabledSnapshot ? 0x00 : 0x80, 0x00], to: device)
+            usleep(50000)
 
-            // 5. Apply WinLock physical function state & return keyboard to standalone Hardware Mode
-            Self.sendOutReport([0x07, 0x48, winLockDisabledSnapshot ? 0x00 : 0x80, 0x00], to: device, delayMs: 5)
-            Self.sendOutReport([0x07, 0x04, 0x01, 0x00], to: device, delayMs: 8)
-            Self.sendOutReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device, delayMs: 8)
+            // Step 6: Return keyboard to standalone Hardware Mode
+            _ = Self.sendReport([0x07, 0x04, 0x01, 0x00], to: device)
+            _ = Self.sendReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device)
+            usleep(50000)
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
