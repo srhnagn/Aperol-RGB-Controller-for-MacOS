@@ -562,22 +562,6 @@ public final class AperolK70Service: ObservableObject {
         s1[0] = 0x07; s1[1] = 0x05; s1[2] = 0x08; s1[3] = 0x00; s1[4] = 0x01
         Self.sendReport(s1, to: device)
 
-        // 4. Matrix mapping: sequence covering all 150 key/zone positions
-        let skipped: Set<UInt8> = [0x3F, 0x41, 0x42, 0x50, 0x53, 0x55, 0x6F, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81]
-        var identifier: UInt8 = 0
-        for _ in 0..<5 {
-            var pkt = [UInt8](repeating: 0, count: 64)
-            pkt[0] = 0x07; pkt[1] = 0x40; pkt[2] = 0x1E
-            for j in 0..<30 {
-                while skipped.contains(identifier) {
-                    identifier &+= 1
-                }
-                pkt[3 + j] = identifier
-                identifier &+= 1
-            }
-            Self.sendReport(pkt, to: device)
-        }
-
         usleep(15000)
     }
 
@@ -612,11 +596,16 @@ public final class AperolK70Service: ObservableObject {
         let pG = UInt8(clamping: Int((nsProf.greenComponent * brightness * 255.0).rounded()))
         let pB = UInt8(clamping: Int((nsProf.blueComponent * brightness * 255.0).rounded()))
 
+        // K70 MK.2 hardware LED scancode map:
+        // Position 8 = WinLock Button (KEY_EN_WINDOWS_LOCK)
+        // Position 125 = Profile Switch Button (KEY_EN_PROFILE)
+        // Position 137 = Brightness Button (KEY_EN_BRIGHTNESS)
+        // Note: Position 16 is '<' (ISO backslash) and Position 114 is ',' (ISO hash) -> they remain mainVal!
         func streamChannel(mainVal: UInt8, bVal: UInt8, wVal: UInt8, pVal: UInt8, channel: UInt8, finishVal: UInt8) {
             var channelBuf = [UInt8](repeating: mainVal, count: 168)
-            channelBuf[16] = bVal
-            channelBuf[114] = wVal
-            channelBuf[125] = pVal
+            channelBuf[8] = wVal     // WinLock Button
+            channelBuf[125] = pVal   // Profile Switch Button
+            channelBuf[137] = bVal   // Brightness Button
 
             var p1 = [UInt8](repeating: 0, count: 64)
             p1[0] = 0x7F; p1[1] = 0x01; p1[2] = 60; p1[3] = 0x00
