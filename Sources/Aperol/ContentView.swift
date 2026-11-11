@@ -236,7 +236,7 @@ struct ContentView: View {
                     .labelsHidden()
                     .frame(width: 32, height: 28)
                     .onChange(of: service.selectedColor) { _, newColor in
-                        guard service.hasUserInteractedWithColor else { return }
+                        service.hasUserInteractedWithColor = true
                         service.applyLiveColor(newColor)
                     }
 
@@ -324,7 +324,7 @@ struct ContentView: View {
                 Slider(value: $service.brightness, in: 0.0...1.0, step: 0.05)
                     .tint(aperolOrange)
                     .onChange(of: service.brightness) { _, _ in
-                        guard service.hasUserInteractedWithColor else { return }
+                        service.hasUserInteractedWithColor = true
                         service.applyLiveColor(service.selectedColor)
                     }
 

@@ -91,7 +91,11 @@ public final class AperolK70Service: ObservableObject {
     @Published public var brightness: Double = 1.0
     @Published public var statusMessage: String?
     @Published public var isWriting: Bool = false
-    @Published public var selectedSlot: Int = 1 // Target slot: 1, 2, or 3
+    @Published public var selectedSlot: Int = 1 {
+        didSet {
+            UserDefaults.standard.set(selectedSlot, forKey: "AperolActiveSlot_v1")
+        }
+    }
     @Published public var savedSlots: Set<Int> = [1, 2, 3]
     @Published public var slotProfiles: [Int: HardwareSlotColor] = [:]
     @Published public var presets: [ColorPreset] = []
@@ -238,6 +242,11 @@ public final class AperolK70Service: ObservableObject {
             self.savedSlots = Set(array)
         } else {
             self.savedSlots = [1, 2, 3]
+        }
+        if let savedSlot = UserDefaults.standard.object(forKey: "AperolActiveSlot_v1") as? Int, (1...3).contains(savedSlot) {
+            self.selectedSlot = savedSlot
+        } else {
+            self.selectedSlot = 2
         }
     }
 
