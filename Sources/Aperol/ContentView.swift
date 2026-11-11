@@ -362,23 +362,18 @@ struct ContentView: View {
 
                 Spacer()
 
-                Button {
-                    service.syncAllTopButtonsToSelectedColor()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "wand.and.stars")
-                            .font(.system(size: 8.5))
-                        Text("Sync with Profile")
-                            .font(.system(size: 9.5, weight: .semibold))
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(aperolOrange.opacity(0.12))
-                    .foregroundStyle(aperolOrange)
-                    .clipShape(Capsule())
+                HStack(spacing: 4) {
+                    Image(systemName: service.isTopButtonsAutoSynced ? "checkmark.circle.fill" : "slider.horizontal.3")
+                        .font(.system(size: 9))
+                        .foregroundStyle(service.isTopButtonsAutoSynced ? Color.green : aperolOrange)
+                    Text(service.isTopButtonsAutoSynced ? "Auto-Synced" : "Custom Accent")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(service.isTopButtonsAutoSynced ? Color.green : aperolOrange)
                 }
-                .buttonStyle(.plain)
-                .help("Set all top hardware button colors to match the currently selected profile")
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background((service.isTopButtonsAutoSynced ? Color.green : aperolOrange).opacity(0.12))
+                .clipShape(Capsule())
             }
 
             // WinLock Action Disable Toggle
@@ -411,56 +406,126 @@ struct ContentView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.05), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            // 2x2 Grid of Top Button Colors
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                // 1. WinLock Locked
-                topButtonColorCard(
-                    title: "WinLock (Locked)",
-                    icon: "lock.fill",
-                    color: $service.winLockLockedColor
-                )
-
-                // 2. WinLock Unlocked with "Match" helper
-                topButtonColorCard(
-                    title: "WinLock (Unlocked)",
-                    icon: "lock.open.fill",
-                    color: $service.winLockUnlockedColor,
-                    accessoryButton: {
-                        Button {
-                            service.matchWinLockUnlockedToLocked()
-                        } label: {
-                            Text("Match Locked")
-                                .font(.system(size: 8, weight: .bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(aperolOrange.opacity(0.15))
-                                .foregroundStyle(aperolOrange)
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Make unlocked color identical to locked color for uniform lighting")
-                    }
-                )
-
-                // 3. Profile Button
-                topButtonColorCard(
+            // Unified 3-Button Overview (Profile, Brightness, WinLock)
+            HStack(spacing: 8) {
+                topButtonStatusBadge(
                     title: "Profile Button",
                     icon: "person.crop.circle",
-                    color: $service.profileButtonColor
+                    color: service.profileButtonColor
                 )
 
-                // 4. Brightness Button
-                topButtonColorCard(
-                    title: "Brightness Button",
+                topButtonStatusBadge(
+                    title: "Brightness",
                     icon: "sun.max.fill",
-                    color: $service.brightnessButtonColor
+                    color: service.brightnessButtonColor
                 )
+
+                topButtonStatusBadge(
+                    title: "WinLock",
+                    icon: "lock.fill",
+                    color: service.winLockLockedColor
+                )
+            }
+
+            // Auto-Sync Toggle & Custom Override Disclosure
+            HStack {
+                Toggle(isOn: $service.isTopButtonsAutoSynced) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Auto-Sync with Active Profile Color")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text("Top buttons always follow the active profile color for complete visual uniformity")
+                            .font(.system(size: 8.5))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+                .toggleStyle(SwitchToggleStyle(tint: aperolOrange))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.02))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            // Optional Individual Pickers if Auto-Sync is turned off
+            if !service.isTopButtonsAutoSynced {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                    topButtonColorCard(
+                        title: "WinLock (Locked)",
+                        icon: "lock.fill",
+                        color: $service.winLockLockedColor
+                    )
+
+                    topButtonColorCard(
+                        title: "WinLock (Unlocked)",
+                        icon: "lock.open.fill",
+                        color: $service.winLockUnlockedColor,
+                        accessoryButton: {
+                            Button {
+                                service.matchWinLockUnlockedToLocked()
+                            } label: {
+                                Text("Match")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(aperolOrange.opacity(0.15))
+                                    .foregroundStyle(aperolOrange)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    )
+
+                    topButtonColorCard(
+                        title: "Profile Button",
+                        icon: "person.crop.circle",
+                        color: $service.profileButtonColor
+                    )
+
+                    topButtonColorCard(
+                        title: "Brightness Button",
+                        icon: "sun.max.fill",
+                        color: $service.brightnessButtonColor
+                    )
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(11)
         .background(cardBackground)
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorder, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func topButtonStatusBadge(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+                .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
+                .shadow(color: color.opacity(0.6), radius: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 3) {
+                    Image(systemName: icon)
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color(white: 0.7))
+                    Text(title)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+                Text(AperolK70Service.hexFromColor(color))
+                    .font(.system(size: 8, weight: .medium).monospaced())
+                    .foregroundStyle(Color(white: 0.5))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(Color.white.opacity(0.04))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.06), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func topButtonColorCard<Accessory: View>(

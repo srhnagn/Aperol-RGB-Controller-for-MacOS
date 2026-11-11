@@ -81,7 +81,13 @@ public final class AperolK70Service: ObservableObject {
 
     @Published public private(set) var isConnected: Bool = false
     @Published public private(set) var deviceName: String = "Corsair K70 RGB MK.2"
-    @Published public var selectedColor: Color = Color(red: 242.0 / 255.0, green: 101.0 / 255.0, blue: 34.0 / 255.0)
+    @Published public var selectedColor: Color = Color(red: 1.0, green: 0.0, blue: 0.0) {
+        didSet {
+            if isTopButtonsAutoSynced {
+                syncTopButtonsToActiveColor(selectedColor)
+            }
+        }
+    }
     @Published public var brightness: Double = 1.0
     @Published public var statusMessage: String?
     @Published public var isWriting: Bool = false
@@ -96,31 +102,39 @@ public final class AperolK70Service: ObservableObject {
     public var hasUserInteractedWithColor: Bool = false
 
     // MARK: - Top Buttons & WinLock Controls
+    @Published public var isTopButtonsAutoSynced: Bool = true {
+        didSet {
+            UserDefaults.standard.set(isTopButtonsAutoSynced, forKey: "AperolTopButtonsAutoSynced_v2")
+            if isTopButtonsAutoSynced {
+                syncTopButtonsToActiveColor(selectedColor)
+            }
+        }
+    }
     @Published public var isWinLockDisabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isWinLockDisabled, forKey: "AperolWinLockDisabled_v1")
             sendWinLockDisabledReport(isWinLockDisabled)
         }
     }
-    @Published public var winLockLockedColor: Color = Color(red: 242.0 / 255.0, green: 107.0 / 255.0, blue: 30.0 / 255.0) {
+    @Published public var winLockLockedColor: Color = Color(red: 1.0, green: 0.0, blue: 0.0) {
         didSet {
             UserDefaults.standard.set(Self.hexFromColor(winLockLockedColor), forKey: "AperolWinLockLockedHex_v1")
             if hasUserInteractedWithColor { applyLiveColor(selectedColor) }
         }
     }
-    @Published public var winLockUnlockedColor: Color = Color(red: 242.0 / 255.0, green: 107.0 / 255.0, blue: 30.0 / 255.0) {
+    @Published public var winLockUnlockedColor: Color = Color(red: 1.0, green: 0.0, blue: 0.0) {
         didSet {
             UserDefaults.standard.set(Self.hexFromColor(winLockUnlockedColor), forKey: "AperolWinLockUnlockedHex_v1")
             if hasUserInteractedWithColor { applyLiveColor(selectedColor) }
         }
     }
-    @Published public var profileButtonColor: Color = Color(red: 242.0 / 255.0, green: 107.0 / 255.0, blue: 30.0 / 255.0) {
+    @Published public var profileButtonColor: Color = Color(red: 1.0, green: 0.0, blue: 0.0) {
         didSet {
             UserDefaults.standard.set(Self.hexFromColor(profileButtonColor), forKey: "AperolProfileButtonHex_v1")
             if hasUserInteractedWithColor { applyLiveColor(selectedColor) }
         }
     }
-    @Published public var brightnessButtonColor: Color = Color(red: 242.0 / 255.0, green: 107.0 / 255.0, blue: 30.0 / 255.0) {
+    @Published public var brightnessButtonColor: Color = Color(red: 1.0, green: 0.0, blue: 0.0) {
         didSet {
             UserDefaults.standard.set(Self.hexFromColor(brightnessButtonColor), forKey: "AperolBrightnessButtonHex_v1")
             if hasUserInteractedWithColor { applyLiveColor(selectedColor) }
@@ -138,6 +152,9 @@ public final class AperolK70Service: ObservableObject {
         loadPresets()
         loadSavedSlots()
         loadSlotProfiles()
+        if let initialColor = slotProfiles[selectedSlot]?.color {
+            self.selectedColor = initialColor
+        }
         loadTopButtonSettings()
         setupHIDManager()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -269,17 +286,48 @@ public final class AperolK70Service: ObservableObject {
     private func loadTopButtonSettings() {
         let defaults = UserDefaults.standard
         self.isWinLockDisabled = defaults.bool(forKey: "AperolWinLockDisabled_v1")
-        if let hex = defaults.string(forKey: "AperolWinLockLockedHex_v1"), let c = Self.colorFromHex(hex) {
-            self.winLockLockedColor = c
+        if defaults.object(forKey: "AperolTopButtonsAutoSynced_v2") != nil {
+            self.isTopButtonsAutoSynced = defaults.bool(forKey: "AperolTopButtonsAutoSynced_v2")
+        } else {
+            self.isTopButtonsAutoSynced = true
         }
-        if let hex = defaults.string(forKey: "AperolWinLockUnlockedHex_v1"), let c = Self.colorFromHex(hex) {
-            self.winLockUnlockedColor = c
+
+        if isTopButtonsAutoSynced {
+            self.winLockLockedColor = selectedColor
+            self.winLockUnlockedColor = selectedColor
+            self.profileButtonColor = selectedColor
+            self.brightnessButtonColor = selectedColor
+        } else {
+            if let hex = defaults.string(forKey: "AperolWinLockLockedHex_v1"), let c = Self.colorFromHex(hex) {
+                self.winLockLockedColor = c
+            } else {
+                self.winLockLockedColor = selectedColor
+            }
+            if let hex = defaults.string(forKey: "AperolWinLockUnlockedHex_v1"), let c = Self.colorFromHex(hex) {
+                self.winLockUnlockedColor = c
+            } else {
+                self.winLockUnlockedColor = selectedColor
+            }
+            if let hex = defaults.string(forKey: "AperolProfileButtonHex_v1"), let c = Self.colorFromHex(hex) {
+                self.profileButtonColor = c
+            } else {
+                self.profileButtonColor = selectedColor
+            }
+            if let hex = defaults.string(forKey: "AperolBrightnessButtonHex_v1"), let c = Self.colorFromHex(hex) {
+                self.brightnessButtonColor = c
+            } else {
+                self.brightnessButtonColor = selectedColor
+            }
         }
-        if let hex = defaults.string(forKey: "AperolProfileButtonHex_v1"), let c = Self.colorFromHex(hex) {
-            self.profileButtonColor = c
-        }
-        if let hex = defaults.string(forKey: "AperolBrightnessButtonHex_v1"), let c = Self.colorFromHex(hex) {
-            self.brightnessButtonColor = c
+    }
+
+    public func syncTopButtonsToActiveColor(_ color: Color) {
+        winLockLockedColor = color
+        winLockUnlockedColor = color
+        profileButtonColor = color
+        brightnessButtonColor = color
+        if hasUserInteractedWithColor {
+            applyLiveColor(color)
         }
     }
 
@@ -290,11 +338,8 @@ public final class AperolK70Service: ObservableObject {
     }
 
     public func syncAllTopButtonsToSelectedColor() {
-        winLockLockedColor = selectedColor
-        winLockUnlockedColor = selectedColor
-        profileButtonColor = selectedColor
-        brightnessButtonColor = selectedColor
-        applyLiveColor(selectedColor)
+        isTopButtonsAutoSynced = true
+        syncTopButtonsToActiveColor(selectedColor)
         statusMessage = "Synced all top button colors with active profile"
     }
 
@@ -436,40 +481,33 @@ public final class AperolK70Service: ObservableObject {
 
     nonisolated private static func waitOp(
         dev: IOHIDDevice,
-        timeoutMs: Int = 2500,
+        timeoutMs: Int = 4000,
         desc: String = ""
     ) -> (st: UInt8, err: UInt8) {
-        usleep(25000) // 25ms initial settle time
+        usleep(40000) // 40ms initial settle time
         let start = Date()
-        var errorCount = 0
         while Date().timeIntervalSince(start) * 1000.0 < Double(timeoutMs) {
             let (st, err) = getOpStatus(dev: dev)
-            // 0x01 = InProgress, 0xFE = USB bus error / settling
+            // 0x01 = InProgress, 0xFE = USB bus settling / SPI flash busy
             if st != 0x01 && st != 0xFE {
                 return (st, err)
             }
-            if st == 0xFE {
-                errorCount += 1
-                if errorCount >= 5 {
-                    return (0xFE, 0xFE)
-                }
-            }
-            usleep(25000) // 25ms interval between polling cycles
+            usleep(40000) // 40ms polling interval
         }
         return (0xFE, 0xFE)
     }
 
     nonisolated private static func closeFile(dev: IOHIDDevice) {
         _ = sendReport([0x07, 0x17, 0x08, 0x00], to: dev)
-        _ = waitOp(dev: dev, timeoutMs: 1500, desc: "closeFile")
-        usleep(15000)
+        _ = waitOp(dev: dev, timeoutMs: 3000, desc: "closeFile")
+        usleep(30000)
     }
 
     @discardableResult
     nonisolated private static func openFileForWrite(
         name: String,
         dev: IOHIDDevice,
-        timeoutMs: Int = 4000
+        timeoutMs: Int = 8000
     ) -> Bool {
         var openPkt = [UInt8](repeating: 0, count: 64)
         openPkt[0] = 0x07; openPkt[1] = 0x17; openPkt[2] = 0x05; openPkt[3] = 0x00
@@ -479,19 +517,20 @@ public final class AperolK70Service: ObservableObject {
         let start = Date()
         while Date().timeIntervalSince(start) * 1000.0 < Double(timeoutMs) {
             let ok = sendReport(openPkt, to: dev)
-            if !ok { return false }
-            let res = waitOp(dev: dev, timeoutMs: 1500, desc: "openWrite \(name)")
+            if !ok {
+                usleep(200000)
+                continue
+            }
+            let res = waitOp(dev: dev, timeoutMs: 3500, desc: "openWrite \(name)")
             if res.st == 0x00 || res.st == 0x04 {
                 return true
             }
             if res.st == 0x03 { // FileAlreadyOpened -> close and retry
                 closeFile(dev: dev)
             } else if res.st == 0x0C || res.st == 0x0D { // Flash busy
-                usleep(400000) // Wait 400ms for flash erase/write cycle
-            } else if res.st == 0xFE {
-                return false
+                usleep(500000) // Wait 500ms for flash erase/write cycle
             } else {
-                usleep(100000)
+                usleep(200000)
             }
         }
         return false
@@ -525,16 +564,17 @@ public final class AperolK70Service: ObservableObject {
                 }
                 usleep(12000) // 12ms quiet delay between chunk packets
             }
-            // Flush batch to MCU buffer (internal SRAM commit, 20ms settle time)
+            // Flush batch to MCU buffer: 0x09 commits the 300-byte SRAM buffer into file stream
             let okFlush = sendReport([0x07, 0x17, 0x09, 0x00], to: dev)
             if !okFlush {
                 closeFile(dev: dev)
                 return false
             }
-            usleep(20000)
+            usleep(25000) // 25ms settle time for SRAM commit
             offset += batchLen
         }
         closeFile(dev: dev)
+        // If this was the large RGB buffer (lght_00.r), give SPI Flash 800ms to commit the 1024 bytes
         if data.count >= 500 {
             usleep(800000) // 800ms settle for SPI Flash
         } else {
@@ -581,20 +621,30 @@ public final class AperolK70Service: ObservableObject {
         let g = UInt8(clamping: Int((nsColor.greenComponent * brightness * 255.0).rounded()))
         let b = UInt8(clamping: Int((nsColor.blueComponent * brightness * 255.0).rounded()))
 
-        let nsBright = NSColor(brightnessButtonColor).usingColorSpace(.sRGB) ?? NSColor(brightnessButtonColor)
-        let bR = UInt8(clamping: Int((nsBright.redComponent * brightness * 255.0).rounded()))
-        let bG = UInt8(clamping: Int((nsBright.greenComponent * brightness * 255.0).rounded()))
-        let bB = UInt8(clamping: Int((nsBright.blueComponent * brightness * 255.0).rounded()))
+        let (bR, bG, bB): (UInt8, UInt8, UInt8)
+        let (wR, wG, wB): (UInt8, UInt8, UInt8)
+        let (pR, pG, pB): (UInt8, UInt8, UInt8)
 
-        let nsWinLock = NSColor(winLockUnlockedColor).usingColorSpace(.sRGB) ?? NSColor(winLockUnlockedColor)
-        let wR = UInt8(clamping: Int((nsWinLock.redComponent * brightness * 255.0).rounded()))
-        let wG = UInt8(clamping: Int((nsWinLock.greenComponent * brightness * 255.0).rounded()))
-        let wB = UInt8(clamping: Int((nsWinLock.blueComponent * brightness * 255.0).rounded()))
+        if isTopButtonsAutoSynced {
+            bR = r; bG = g; bB = b
+            wR = r; wG = g; wB = b
+            pR = r; pG = g; pB = b
+        } else {
+            let nsBright = NSColor(brightnessButtonColor).usingColorSpace(.sRGB) ?? NSColor(brightnessButtonColor)
+            bR = UInt8(clamping: Int((nsBright.redComponent * brightness * 255.0).rounded()))
+            bG = UInt8(clamping: Int((nsBright.greenComponent * brightness * 255.0).rounded()))
+            bB = UInt8(clamping: Int((nsBright.blueComponent * brightness * 255.0).rounded()))
 
-        let nsProf = NSColor(profileButtonColor).usingColorSpace(.sRGB) ?? NSColor(profileButtonColor)
-        let pR = UInt8(clamping: Int((nsProf.redComponent * brightness * 255.0).rounded()))
-        let pG = UInt8(clamping: Int((nsProf.greenComponent * brightness * 255.0).rounded()))
-        let pB = UInt8(clamping: Int((nsProf.blueComponent * brightness * 255.0).rounded()))
+            let nsWinLock = NSColor(winLockUnlockedColor).usingColorSpace(.sRGB) ?? NSColor(winLockUnlockedColor)
+            wR = UInt8(clamping: Int((nsWinLock.redComponent * brightness * 255.0).rounded()))
+            wG = UInt8(clamping: Int((nsWinLock.greenComponent * brightness * 255.0).rounded()))
+            wB = UInt8(clamping: Int((nsWinLock.blueComponent * brightness * 255.0).rounded()))
+
+            let nsProf = NSColor(profileButtonColor).usingColorSpace(.sRGB) ?? NSColor(profileButtonColor)
+            pR = UInt8(clamping: Int((nsProf.redComponent * brightness * 255.0).rounded()))
+            pG = UInt8(clamping: Int((nsProf.greenComponent * brightness * 255.0).rounded()))
+            pB = UInt8(clamping: Int((nsProf.blueComponent * brightness * 255.0).rounded()))
+        }
 
         // K70 MK.2 hardware LED scancode map:
         // Position 8 = WinLock Button (KEY_EN_WINDOWS_LOCK)
@@ -650,16 +700,30 @@ public final class AperolK70Service: ObservableObject {
         selectedSlot = slot
         if let slotCol = slotProfiles[slot] {
             selectedColor = slotCol.color
+            if isTopButtonsAutoSynced {
+                syncTopButtonsToActiveColor(slotCol.color)
+            }
         }
         let slotIdx = UInt8(max(0, min(2, slot - 1)))
 
         hardwareQueue.async { [weak self] in
             guard let self else { return }
+            // 1. Enter software mode
             Self.sendReport([0x07, 0x04, 0x02, 0x00], to: device)
+            Self.sendReport([0x07, 0x05, 0x02, 0x00, 0x03], to: device)
+            usleep(50000)
+
+            // 2. Select slot directory & commit
             Self.sendReport([0x07, 0x17, 0x0C, slotIdx], to: device)
-            usleep(150000)
+            usleep(100000)
+            Self.sendReport([0x07, 0x17, 0x0E, 0x00], to: device)
+            sleep(1)
+
+            // 3. Return to hardware mode
             Self.sendReport([0x07, 0x04, 0x01, 0x00], to: device)
             Self.sendReport([0x07, 0x05, 0x01, 0x00, 0x03], to: device)
+            usleep(50000)
+
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isStreaming = false
@@ -701,34 +765,6 @@ public final class AperolK70Service: ObservableObject {
         let profilesSnapshot = self.slotProfiles
         let winLockDisabledSnapshot = self.isWinLockDisabled
 
-        let nsWinLockLocked = NSColor(winLockLockedColor).usingColorSpace(.sRGB) ?? NSColor(winLockLockedColor)
-        let winLockLockedRGB: (UInt8, UInt8, UInt8) = (
-            UInt8(clamping: Int((nsWinLockLocked.redComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsWinLockLocked.greenComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsWinLockLocked.blueComponent * 255.0).rounded()))
-        )
-
-        let nsWinLockUnlocked = NSColor(winLockUnlockedColor).usingColorSpace(.sRGB) ?? NSColor(winLockUnlockedColor)
-        let winLockUnlockedRGB: (UInt8, UInt8, UInt8) = (
-            UInt8(clamping: Int((nsWinLockUnlocked.redComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsWinLockUnlocked.greenComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsWinLockUnlocked.blueComponent * 255.0).rounded()))
-        )
-
-        let nsProf = NSColor(profileButtonColor).usingColorSpace(.sRGB) ?? NSColor(profileButtonColor)
-        let profRGB: (UInt8, UInt8, UInt8) = (
-            UInt8(clamping: Int((nsProf.redComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsProf.greenComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsProf.blueComponent * 255.0).rounded()))
-        )
-
-        let nsBright = NSColor(brightnessButtonColor).usingColorSpace(.sRGB) ?? NSColor(brightnessButtonColor)
-        let brightRGB: (UInt8, UInt8, UInt8) = (
-            UInt8(clamping: Int((nsBright.redComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsBright.greenComponent * 255.0).rounded())),
-            UInt8(clamping: Int((nsBright.blueComponent * 255.0).rounded()))
-        )
-
         hardwareQueue.async { [weak self] in
             // 1. Enter Software Mode
             Self.sendReport([0x07, 0x04, 0x02, 0x00], to: device)
@@ -757,26 +793,45 @@ public final class AperolK70Service: ObservableObject {
                 for i in 0..<16 { infoPkt[4 + i] = guid[i] }
                 infoPkt[20] = hwId[0]; infoPkt[21] = hwId[1]; infoPkt[22] = hwId[2]; infoPkt[23] = 0x01
 
+                var infoRegistered = false
                 for _ in 1...5 {
-                    _ = Self.sendReport(infoPkt, to: device)
-                    let infoSt = Self.waitOp(dev: device, timeoutMs: 15000, desc: "commitProfileInfo \(slotNum)")
-                    if infoSt.st == 0x00 { break }
-                    if infoSt.st == 0x0C || infoSt.st == 0x0D {
+                    let ok = Self.sendReport(infoPkt, to: device)
+                    if !ok { break }
+                    let infoSt = Self.waitOp(dev: device, timeoutMs: 3000, desc: "commitProfileInfo \(slotNum)")
+                    if infoSt.st == 0x00 {
+                        infoRegistered = true
+                        break
+                    } else if infoSt.st == 0x0C || infoSt.st == 0x0D {
                         sleep(2)
                     } else {
-                        sleep(1)
+                        usleep(200000)
                     }
                 }
 
+                guard infoRegistered else {
+                    Task { @MainActor [weak self] in
+                        self?.isWriting = false
+                        self?.statusMessage = "❌ Flash Error: Slot \(slotNum) profile info failed"
+                    }
+                    return
+                }
+
                 // Step B: Set Current Profile Slot Directory (0x0C)
-                _ = Self.sendReport([0x07, 0x17, 0x0C, UInt8(s)], to: device)
-                usleep(150000)
+                let okSlot = Self.sendReport([0x07, 0x17, 0x0C, UInt8(s)], to: device)
+                guard okSlot else {
+                    Task { @MainActor [weak self] in
+                        self?.isWriting = false
+                        self?.statusMessage = "❌ Flash Error: Slot \(slotNum) directory failed"
+                    }
+                    return
+                }
+                usleep(150000) // 150ms settle for slot directory pointer
 
                 // Step C: Build 7 Profile Files
                 // 1. PROFILE.DAT
                 let profileDat: [UInt8] = [0x50, winLockDisabledSnapshot ? 0x00 : 0x02, 0x00, 0x00]
 
-                // 2. PROFILE.I
+                // 2. PROFILE.I (268 bytes): Every profile slot burns its own true uniform color to all top buttons!
                 var profileI = [UInt8](repeating: 0, count: 268)
                 profileI[0] = 0x49; profileI[1] = 0x00
                 for i in 0..<16 { profileI[2 + i] = guid[i] }
@@ -786,16 +841,12 @@ public final class AperolK70Service: ObservableObject {
                 }
                 profileI[252] = 0x00
 
-                let (btnR, btnG, btnB) = (slotNum == activeTarget) ? profRGB : (col.r, col.g, col.b)
-                let (brightR, brightG, brightB) = (slotNum == activeTarget) ? brightRGB : (col.r, col.g, col.b)
-                let (lockR, lockG, lockB) = (slotNum == activeTarget) ? winLockLockedRGB : (col.r, col.g, col.b)
-                let (unlockR, unlockG, unlockB) = (slotNum == activeTarget) ? winLockUnlockedRGB : (col.r, col.g, col.b)
-
-                profileI[253] = btnR; profileI[254] = btnG; profileI[255] = btnB
-                profileI[256] = brightR; profileI[257] = brightG; profileI[258] = brightB
-                profileI[259] = lockR; profileI[260] = lockG; profileI[261] = lockB
-                profileI[262] = unlockR; profileI[263] = unlockG; profileI[264] = unlockB
-                profileI[265] = 0xFF
+                // Identical to K70HardwareProfileBurner: Top buttons match each profile's authentic color!
+                profileI[253] = col.r; profileI[254] = col.g; profileI[255] = col.b // Profile Button RGB
+                profileI[256] = col.r; profileI[257] = col.g; profileI[258] = col.b // Brightness Button RGB
+                profileI[259] = col.r; profileI[260] = col.g; profileI[261] = col.b // WinLock Locked RGB
+                profileI[262] = col.r; profileI[263] = col.g; profileI[264] = col.b // WinLock Unlocked RGB
+                profileI[265] = 0xFF // SidelightingControl enabled
 
                 // 3. PROFILE.MAP
                 let profileMap: [UInt8] = [0x41, 0x00, 0x00, 0x00]
@@ -810,7 +861,7 @@ public final class AperolK70Service: ObservableObject {
                 lghtK[0] = 0x9C
                 for k in 0..<156 { lghtK[4 + k] = UInt8(k) }
 
-                // 6. lght_00.r (1024 bytes: 156 keys x 4 bytes in 1024-byte allocated buffer)
+                // 6. lght_00.r (1024 bytes allocated)
                 var lghtR = [UInt8](repeating: 0, count: 1024)
                 for k in 0..<156 {
                     let base = k * 4
@@ -850,7 +901,14 @@ public final class AperolK70Service: ObservableObject {
                 }
 
                 // Step D: Commit Profile Changes to physical SPI NOR Flash (0x0E)
-                _ = Self.sendReport([0x07, 0x17, 0x0E, 0x00], to: device)
+                let okCommit = Self.sendReport([0x07, 0x17, 0x0E, 0x00], to: device)
+                guard okCommit else {
+                    Task { @MainActor [weak self] in
+                        self?.isWriting = false
+                        self?.statusMessage = "❌ Flash Error: Slot \(slotNum) commit failed"
+                    }
+                    return
+                }
                 Task { @MainActor [weak self] in
                     self?.statusMessage = "Slot \(slotNum) saved! SPI Flash settling (5s)..."
                 }
